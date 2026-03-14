@@ -1,0 +1,436 @@
+<?php
+defined('ABSPATH') || exit;
+
+/**
+ * Handles frontend form submissions, validates data, creates posts as pending.
+ */
+class EFF_Form_Handler {
+
+    /**
+     * Process the form submission if present.
+     *
+     * @return array|WP_Error|null  null = no submission, array = success, WP_Error = validation errors.
+     */
+    public function maybe_process(string $post_type, string $field_group) {
+        if (empty($_POST['eff_submit'])) {
+            return null;
+        }
+
+        // Load plugin settings
+        $settings     = EFF_Admin_Settings::get_settings();
+        $rate_seconds = max(0, (int) ($settings['rate_limit_seconds'] ?? 60));
+
+        // Verify nonce
+        if (!isset($_POST['eff_nonce']) || !wp_verify_nonce($_POST['eff_nonce'], 'eff_submit_' . $post_type)) {
+            return new WP_Error('nonce_fail', __('Error de seguridad. Por favor recarga la página e intenta de nuevo.', 'acf-forms-frontend-creator'));
+        }
+
+        // Honeypot check
+        if (!empty($settings['enable_honeypot']) && !empty($_POST['eff_website'])) {
+            // Silently reject spam – return "success" to avoid leaking info
+            return ['success' => true, 'post_id' => 0];
+        }
+
+        // Rate limiting via transient (per IP)
+        $ip_hash    = hash('sha256', $this->get_client_ip() . wp_salt('nonce'));
+        $rate_key   = 'eff_rate_' . substr($ip_hash, 0, 20);
+        if ($rate_seconds > 0 && get_transient($rate_key)) {
+            return new WP_Error('rate_limit', __('Has enviado un registro recientemente. Por favor espera un momento antes de intentar de nuevo.', 'acf-forms-frontend-creator'));
+        }
+
+        // Validate title
+        $title = sanitize_text_field(wp_unslash($_POST['eff_title'] ?? ''));
+        if (empty($title)) {
+            return new WP_Error('empty_title', __('El nombre es obligatorio.', 'acf-forms-frontend-creator'));
+        }
+
+        // Validate ACF fields
+        $fields = acf_get_fields($field_group);
+        if (empty($fields)) {
+            return new WP_Error('no_fields', __('No se encontraron campos para validar.', 'acf-forms-frontend-creator'));
+        }
+
+        $acf_data = $_POST['acf'] ?? [];
+        $errors   = new WP_Error();
+
+        $sanitized = $this->validate_fields($fields, $acf_data, $errors);
+
+        if ($errors->has_errors()) {
+            return $errors;
+        }
+
+        // Handle file uploads
+        $file_values = $this->handle_file_uploads($fields, $errors);
+        if ($errors->has_errors()) {
+            return $errors;
+        }
+
+        // Generate consecutive number for this post type
+        $counter_key = 'eff_consecutive_' . $post_type;
+        $consecutive = (int) get_option($counter_key, 0) + 1;
+        update_option($counter_key, $consecutive, false);
+
+        // Build prefixed title: TYPE 0001 - User Title
+        $cpt_obj    = get_post_type_object($post_type);
+        $type_label = $cpt_obj ? $cpt_obj->labels->singular_name : $post_type;
+        $full_title = sprintf('%s %04d - %s', strtoupper($type_label), $consecutive, $title);
+
+        // Create the post as pending
+        $post_id = wp_insert_post([
+            'post_type'   => $post_type,
+            'post_title'  => $full_title,
+            'post_status' => 'pending',
+            'post_author' => get_current_user_id() ?: 1,
+        ], true);
+
+        if (is_wp_error($post_id)) {
+            // Rollback consecutive on failure
+            update_option($counter_key, $consecutive - 1, false);
+            return new WP_Error('insert_fail', __('Error al crear el registro. Intenta de nuevo.', 'acf-forms-frontend-creator'));
+        }
+
+        // Save ACF field values
+        foreach ($sanitized as $field_name => $value) {
+            update_field($field_name, $value, $post_id);
+        }
+
+        // Save uploaded files
+        foreach ($file_values as $field_name => $attachment_id) {
+            update_field($field_name, $attachment_id, $post_id);
+        }
+
+        // Store metadata about the submission
+        update_post_meta($post_id, '_eff_submitted_from', 'frontend');
+        update_post_meta($post_id, '_eff_submitted_ip', $ip_hash);
+        update_post_meta($post_id, '_eff_submitted_at', current_time('mysql'));
+
+        // Set rate limit
+        if ($rate_seconds > 0) {
+            set_transient($rate_key, 1, $rate_seconds);
+        }
+
+        // Email notification
+        if (!empty($settings['notify_admin'])) {
+            $this->send_notification($post_id, $title, $post_type, $settings);
+        }
+
+        /**
+         * Fires after a frontend form submission creates a pending post.
+         *
+         * @param int    $post_id    The created post ID.
+         * @param string $post_type  The CPT slug.
+         * @param array  $sanitized  Sanitized ACF values.
+         */
+        do_action('eff_after_submission', $post_id, $post_type, $sanitized);
+
+        return ['success' => true, 'post_id' => $post_id];
+    }
+
+    /**
+     * Validate and sanitize ACF fields recursively.
+     */
+    private function validate_fields(array $fields, array $data, WP_Error &$errors): array {
+        $sanitized = [];
+
+        foreach ($fields as $field) {
+            $name  = $field['name'];
+            $value = $data[$name] ?? null;
+
+            // Skip non-input types
+            if (in_array($field['type'], ['message', 'accordion', 'tab', 'clone'], true)) {
+                continue;
+            }
+
+            // Skip file/image types (handled separately)
+            if (in_array($field['type'], ['file', 'image'], true)) {
+                continue;
+            }
+
+            // Required validation
+            if (!empty($field['required'])) {
+                if (null === $value || '' === $value || (is_array($value) && empty($value))) {
+                    $errors->add(
+                        'required_' . $name,
+                        sprintf(__('El campo "%s" es obligatorio.', 'acf-forms-frontend-creator'), $field['label'])
+                    );
+                    continue;
+                }
+            }
+
+            // Type-specific sanitization and validation
+            $sanitized[$name] = $this->sanitize_by_type($field, $value, $errors);
+        }
+
+        return $sanitized;
+    }
+
+    /**
+     * Sanitize a value based on its ACF field type.
+     */
+    private function sanitize_by_type(array $field, mixed $value, WP_Error &$errors): mixed {
+        if (null === $value || '' === $value) {
+            return $field['default_value'] ?? '';
+        }
+
+        switch ($field['type']) {
+            case 'text':
+            case 'password':
+                $clean = sanitize_text_field(wp_unslash($value));
+                if (!empty($field['maxlength']) && mb_strlen($clean) > (int)$field['maxlength']) {
+                    $errors->add('maxlength_' . $field['name'], sprintf(__('"%s" excede la longitud máxima permitida.', 'acf-forms-frontend-creator'), $field['label']));
+                }
+                return $clean;
+
+            case 'textarea':
+            case 'wysiwyg':
+                return sanitize_textarea_field(wp_unslash($value));
+
+            case 'number':
+                $num = filter_var($value, FILTER_VALIDATE_FLOAT);
+                if (false === $num && !empty($field['required'])) {
+                    $errors->add('invalid_' . $field['name'], sprintf(__('"%s" debe ser un número válido.', 'acf-forms-frontend-creator'), $field['label']));
+                    return '';
+                }
+                if (isset($field['min']) && '' !== $field['min'] && $num < (float)$field['min']) {
+                    $errors->add('min_' . $field['name'], sprintf(__('"%s" debe ser mayor o igual a %s.', 'acf-forms-frontend-creator'), $field['label'], $field['min']));
+                }
+                if (isset($field['max']) && '' !== $field['max'] && $num > (float)$field['max']) {
+                    $errors->add('max_' . $field['name'], sprintf(__('"%s" debe ser menor o igual a %s.', 'acf-forms-frontend-creator'), $field['label'], $field['max']));
+                }
+                return $num;
+
+            case 'email':
+                $clean = sanitize_email(wp_unslash($value));
+                if (!empty($value) && !is_email($clean)) {
+                    $errors->add('email_' . $field['name'], sprintf(__('"%s" no es una dirección de email válida.', 'acf-forms-frontend-creator'), $field['label']));
+                }
+                return $clean;
+
+            case 'url':
+                $clean = esc_url_raw(wp_unslash($value));
+                if (!empty($value) && empty($clean)) {
+                    $errors->add('url_' . $field['name'], sprintf(__('"%s" no es una URL válida.', 'acf-forms-frontend-creator'), $field['label']));
+                }
+                return $clean;
+
+            case 'select':
+            case 'radio':
+                $choices = array_keys($field['choices'] ?? []);
+                if (is_array($value)) {
+                    return array_filter(array_map('sanitize_text_field', $value), fn($v) => in_array($v, $choices, true));
+                }
+                $clean = sanitize_text_field($value);
+                if (!empty($clean) && !in_array($clean, $choices, true)) {
+                    $errors->add('choice_' . $field['name'], sprintf(__('"%s" tiene un valor no válido.', 'acf-forms-frontend-creator'), $field['label']));
+                    return '';
+                }
+                return $clean;
+
+            case 'checkbox':
+                $choices = array_keys($field['choices'] ?? []);
+                if (!is_array($value)) {
+                    $value = [$value];
+                }
+                return array_filter(array_map('sanitize_text_field', $value), fn($v) => in_array($v, $choices, true));
+
+            case 'true_false':
+                return $value ? 1 : 0;
+
+            case 'date_picker':
+                $clean = sanitize_text_field($value);
+                if (!empty($clean) && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $clean)) {
+                    $errors->add('date_' . $field['name'], sprintf(__('"%s" no tiene un formato de fecha válido.', 'acf-forms-frontend-creator'), $field['label']));
+                    return '';
+                }
+                return $clean;
+
+            case 'date_time_picker':
+                $clean = sanitize_text_field($value);
+                if (!empty($clean) && !preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/', $clean)) {
+                    $errors->add('datetime_' . $field['name'], sprintf(__('"%s" no tiene un formato válido.', 'acf-forms-frontend-creator'), $field['label']));
+                    return '';
+                }
+                return $clean;
+
+            case 'time_picker':
+                $clean = sanitize_text_field($value);
+                if (!empty($clean) && !preg_match('/^\d{2}:\d{2}(:\d{2})?$/', $clean)) {
+                    $errors->add('time_' . $field['name'], sprintf(__('"%s" no tiene un formato de hora válido.', 'acf-forms-frontend-creator'), $field['label']));
+                    return '';
+                }
+                return $clean;
+
+            case 'color_picker':
+                $clean = sanitize_hex_color($value);
+                return $clean ?: '';
+
+            default:
+                return sanitize_text_field(wp_unslash(is_array($value) ? '' : $value));
+        }
+    }
+
+    /**
+     * Handle file/image uploads for the submission.
+     */
+    private function handle_file_uploads(array $fields, WP_Error &$errors): array {
+        $results = [];
+        $has_files = !empty($_FILES['acf']);
+
+        // Always validate required file fields, even if no files were uploaded
+        foreach ($fields as $field) {
+            if (!in_array($field['type'], ['file', 'image'], true)) {
+                continue;
+            }
+
+            $name = $field['name'];
+
+            // Check if file was uploaded for this field
+            $file_uploaded = $has_files
+                && !empty($_FILES['acf']['name'][$name])
+                && !empty($_FILES['acf']['tmp_name'][$name])
+                && (int) ($_FILES['acf']['error'][$name] ?? 4) === UPLOAD_ERR_OK;
+
+            if (!$file_uploaded) {
+                if (!empty($field['required'])) {
+                    $errors->add('required_' . $name, sprintf(__('El campo "%s" es obligatorio.', 'acf-forms-frontend-creator'), $field['label']));
+                }
+                continue;
+            }
+        }
+
+        // If there are required-file errors, return early before processing uploads
+        if ($errors->has_errors() || !$has_files) {
+            return $results;
+        }
+
+        require_once ABSPATH . 'wp-admin/includes/image.php';
+        require_once ABSPATH . 'wp-admin/includes/file.php';
+        require_once ABSPATH . 'wp-admin/includes/media.php';
+
+        foreach ($fields as $field) {
+            if (!in_array($field['type'], ['file', 'image'], true)) {
+                continue;
+            }
+
+            $name = $field['name'];
+
+            // Skip if no file uploaded for this field (non-required already passed)
+            if (empty($_FILES['acf']['name'][$name]) || empty($_FILES['acf']['tmp_name'][$name])) {
+                continue;
+            }
+
+            // Rebuild $_FILES structure for wp_handle_upload
+            $file = [
+                'name'     => $_FILES['acf']['name'][$name],
+                'type'     => $_FILES['acf']['type'][$name],
+                'tmp_name' => $_FILES['acf']['tmp_name'][$name],
+                'error'    => $_FILES['acf']['error'][$name],
+                'size'     => $_FILES['acf']['size'][$name],
+            ];
+
+            // Validate file extension against plugin global settings
+            $settings          = EFF_Admin_Settings::get_settings();
+            $allowed_ext_str   = $settings['allowed_file_types'] ?? '';
+            $max_size_mb       = (float) ($settings['max_file_size_mb'] ?? 2);
+
+            if (!empty($allowed_ext_str)) {
+                $allowed_exts = array_map('trim', array_map('strtolower', explode(',', $allowed_ext_str)));
+                $file_ext     = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+                if (!in_array($file_ext, $allowed_exts, true)) {
+                    $errors->add(
+                        'filetype_' . $name,
+                        sprintf(
+                            __('El archivo "%1$s" tiene un tipo no permitido (.%2$s). Tipos permitidos: %3$s', 'acf-forms-frontend-creator'),
+                            $field['label'],
+                            esc_html($file_ext),
+                            esc_html($allowed_ext_str)
+                        )
+                    );
+                    continue;
+                }
+            }
+
+            // Validate file size against plugin global settings
+            if ($max_size_mb > 0 && $file['size'] > $max_size_mb * 1024 * 1024) {
+                $errors->add(
+                    'filesize_' . $name,
+                    sprintf(
+                        __('El archivo "%1$s" excede el tamaño máximo permitido (%2$s MB).', 'acf-forms-frontend-creator'),
+                        $field['label'],
+                        $max_size_mb
+                    )
+                );
+                continue;
+            }
+
+            // Validate mime type
+            $allowed = ('image' === $field['type'])
+                ? ['jpg|jpeg|jpe' => 'image/jpeg', 'png' => 'image/png', 'gif' => 'image/gif', 'webp' => 'image/webp']
+                : null; // null = WordPress default allowed types
+
+            $upload = wp_handle_upload($file, [
+                'test_form' => false,
+                'mimes'     => $allowed,
+            ]);
+
+            if (!empty($upload['error'])) {
+                $errors->add('upload_' . $name, sprintf(__('Error al subir "%s": %s', 'acf-forms-frontend-creator'), $field['label'], $upload['error']));
+                continue;
+            }
+
+            // Create attachment
+            $attachment_id = wp_insert_attachment([
+                'post_mime_type' => $upload['type'],
+                'post_title'     => sanitize_file_name($file['name']),
+                'post_content'   => '',
+                'post_status'    => 'inherit',
+            ], $upload['file']);
+
+            if (!is_wp_error($attachment_id)) {
+                wp_update_attachment_metadata($attachment_id, wp_generate_attachment_metadata($attachment_id, $upload['file']));
+                $results[$name] = $attachment_id;
+            }
+        }
+
+        return $results;
+    }
+
+    /**
+     * Get client IP safely (hashed for privacy).
+     */
+    private function get_client_ip(): string {
+        $ip = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+        return filter_var($ip, FILTER_VALIDATE_IP) ?: '0.0.0.0';
+    }
+
+    /**
+     * Send email notification to admin about a new pending submission.
+     */
+    private function send_notification(int $post_id, string $title, string $post_type, array $settings): void {
+        $to = !empty($settings['notify_email']) ? $settings['notify_email'] : get_option('admin_email');
+        if (empty($to)) {
+            return;
+        }
+
+        $cpt_obj   = get_post_type_object($post_type);
+        $cpt_label = $cpt_obj ? $cpt_obj->labels->singular_name : $post_type;
+        $edit_link = admin_url('post.php?post=' . $post_id . '&action=edit');
+        $site_name = get_bloginfo('name');
+
+        $subject = sprintf('[%s] Nuevo registro pendiente: %s', $site_name, $title);
+        $message = sprintf(
+            "Se ha recibido un nuevo registro desde el formulario público.\n\n" .
+            "Tipo: %s\n" .
+            "Título: %s\n" .
+            "Estado: Pendiente de aprobación\n" .
+            "Fecha: %s\n\n" .
+            "Revisar y aprobar:\n%s\n",
+            $cpt_label,
+            $title,
+            current_time('d/m/Y H:i'),
+            $edit_link
+        );
+
+        wp_mail($to, $subject, $message);
+    }
+}

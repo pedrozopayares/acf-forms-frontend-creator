@@ -1,0 +1,239 @@
+/* ── ESAL Frontend Form ── */
+
+/* Reset & base */
+.eff-form {
+    max-width: 720px;
+    margin: 2rem 0;
+    font-family: inherit;
+}
+
+.eff-form *,
+.eff-form *::before,
+.eff-form *::after {
+    box-sizing: border-box;
+}
+
+/* Notices */
+.eff-notice {
+    padding: 1rem 1.25rem;
+    border-radius: 6px;
+    margin-bottom: 1.5rem;
+    font-size: 0.95rem;
+}
+
+.eff-notice--success {
+    background: #d4edda;
+    color: #155724;
+    border: 1px solid #c3e6cb;
+}
+
+.eff-notice--error {
+    background: #f8d7da;
+    color: #721c24;
+    border: 1px solid #f5c6cb;
+}
+
+.eff-notice--error p {
+    margin: 0.25rem 0;
+}
+
+.eff-error {
+    color: #721c24;
+    background: #f8d7da;
+    padding: 0.75rem 1rem;
+    border-radius: 6px;
+}
+
+/* Input error state */
+.eff-input--error {
+    border-color: #dc3545 !important;
+    box-shadow: 0 0 0 2px rgba(220, 53, 69, 0.2);
+}
+
+.eff-client-error {
+    color: #721c24;
+    font-size: 0.85rem;
+    margin: 0.25rem 0 0;
+}
+
+/* Fields */
+.eff-field {
+    margin-bottom: 1.25rem;
+}
+
+.eff-label {
+    display: block;
+    font-weight: 600;
+    margin-bottom: 0.35rem;
+    font-size: 0.9rem;
+    color: #1a1a1a;
+}
+
+.eff-required {
+    color: #c0392b;
+    font-weight: bold;
+}
+
+.eff-input,
+.eff-textarea,
+.eff-select {
+    width: 100%;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 0.95rem;
+    font-family: inherit;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    background: #fff;
+}
+
+.eff-input:focus,
+.eff-textarea:focus,
+.eff-select:focus {
+    border-color: #2271b1;
+    box-shadow: 0 0 0 2px rgba(34, 113, 177, 0.15);
+    outline: none;
+}
+
+.eff-input--color {
+    width: 80px;
+    height: 40px;
+    padding: 2px;
+    cursor: pointer;
+}
+
+.eff-textarea--large {
+    min-height: 160px;
+}
+
+.eff-instructions {
+    margin: 0.25rem 0 0;
+    font-size: 0.82rem;
+    color: #666;
+    line-height: 1.4;
+}
+
+/* Fieldsets */
+.eff-fieldset {
+    border: 1px solid #e0e0e0;
+    border-radius: 6px;
+    padding: 1rem 1.25rem;
+    margin-bottom: 1.25rem;
+}
+
+.eff-legend {
+    font-weight: 700;
+    font-size: 1rem;
+    padding: 0 0.5rem;
+    color: #1a1a1a;
+}
+
+.eff-fieldset--inline {
+    border: none;
+    padding: 0;
+    margin: 0;
+}
+
+.eff-fieldset--inline .eff-label {
+    margin-bottom: 0.5rem;
+}
+
+/* Radio & Checkbox */
+.eff-radio-label,
+.eff-checkbox-label {
+    display: block;
+    padding: 0.3rem 0;
+    font-size: 0.9rem;
+    cursor: pointer;
+}
+
+.eff-radio-label input,
+.eff-checkbox-label input {
+    margin-right: 0.4rem;
+}
+
+/* Repeater */
+.eff-repeater {
+    background: #fafafa;
+}
+
+.eff-repeater-row {
+    padding: 0.75rem 0;
+    border-bottom: 1px dashed #ddd;
+    position: relative;
+}
+
+.eff-repeater-row:last-child {
+    border-bottom: none;
+}
+
+.eff-repeater-remove {
+    margin-top: 0.5rem;
+}
+
+.eff-repeater-add {
+    margin-top: 0.75rem;
+}
+
+/* Buttons */
+.eff-btn {
+    display: inline-block;
+    padding: 0.65rem 1.5rem;
+    border: none;
+    border-radius: 4px;
+    font-size: 0.95rem;
+    font-family: inherit;
+    cursor: pointer;
+    text-decoration: none;
+    transition: background 0.2s, transform 0.1s;
+}
+
+.eff-btn:active {
+    transform: scale(0.98);
+}
+
+.eff-btn--primary {
+    background: #2271b1;
+    color: #fff;
+}
+
+.eff-btn--primary:hover {
+    background: #135e96;
+}
+
+.eff-btn--secondary {
+    background: #f0f0f1;
+    color: #1a1a1a;
+    border: 1px solid #ccc;
+}
+
+.eff-btn--secondary:hover {
+    background: #e0e0e1;
+}
+
+.eff-btn--small {
+    padding: 0.3rem 0.75rem;
+    font-size: 0.82rem;
+}
+
+/* Honeypot - hidden */
+.eff-hp {
+    position: absolute;
+    left: -9999px;
+    opacity: 0;
+    height: 0;
+    overflow: hidden;
+}
+
+/* Responsive */
+@media (max-width: 600px) {
+    .eff-form {
+        margin: 1rem 0;
+    }
+
+    .eff-input,
+    .eff-textarea,
+    .eff-select {
+        font-size: 1rem;
+    }
+}
