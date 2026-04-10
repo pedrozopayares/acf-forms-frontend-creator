@@ -5,9 +5,71 @@
     'use strict';
 
     document.addEventListener('DOMContentLoaded', function () {
+        initTabs();
         initRepeaters();
         initFormEnhancements();
     });
+
+    /**
+     * Tab navigation: switch panels on click.
+     */
+    function initTabs() {
+        document.querySelectorAll('.eff-tabs').forEach(function (tabContainer) {
+            var buttons = tabContainer.querySelectorAll('.eff-tabs__btn');
+            var panels  = tabContainer.querySelectorAll('.eff-tabs__panel');
+
+            buttons.forEach(function (btn) {
+                btn.addEventListener('click', function () {
+                    var targetIndex = btn.dataset.tab;
+
+                    // Deactivate all
+                    buttons.forEach(function (b) {
+                        b.classList.remove('eff-tabs__btn--active');
+                        b.setAttribute('aria-selected', 'false');
+                    });
+                    panels.forEach(function (p) {
+                        p.classList.remove('eff-tabs__panel--active');
+                    });
+
+                    // Activate target
+                    btn.classList.add('eff-tabs__btn--active');
+                    btn.setAttribute('aria-selected', 'true');
+                    var targetPanel = tabContainer.querySelector('[data-tab-panel="' + targetIndex + '"]');
+                    if (targetPanel) {
+                        targetPanel.classList.add('eff-tabs__panel--active');
+                    }
+                });
+            });
+        });
+    }
+
+    /**
+     * Reveal the tab panel containing a given element (for validation errors).
+     */
+    function revealFieldInTabs(el) {
+        var panel = el.closest('.eff-tabs__panel');
+        if (!panel) return;
+
+        var tabContainer = panel.closest('.eff-tabs');
+        if (!tabContainer) return;
+
+        var tabIndex = panel.dataset.tabPanel;
+
+        tabContainer.querySelectorAll('.eff-tabs__btn').forEach(function (b) {
+            b.classList.remove('eff-tabs__btn--active');
+            b.setAttribute('aria-selected', 'false');
+        });
+        tabContainer.querySelectorAll('.eff-tabs__panel').forEach(function (p) {
+            p.classList.remove('eff-tabs__panel--active');
+        });
+
+        var btn = tabContainer.querySelector('[data-tab="' + tabIndex + '"]');
+        if (btn) {
+            btn.classList.add('eff-tabs__btn--active');
+            btn.setAttribute('aria-selected', 'true');
+        }
+        panel.classList.add('eff-tabs__panel--active');
+    }
 
     function initRepeaters() {
         document.querySelectorAll('.eff-repeater').forEach(function (repeater) {
@@ -179,9 +241,15 @@
                         msg.textContent = 'Tipo de archivo no permitido (' + err.ext + '). Permitidos: ' + err.allowed;
                         container.appendChild(msg);
                     });
-                    var firstErr = fileTypeErrors[0].input.closest('.eff-field') || fileTypeErrors[0].input.parentNode;
-                    firstErr.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                    fileTypeErrors[0].input.focus();
+                    var firstErr = fileTypeErrors[0].input;
+                    revealFieldInTabs(firstErr);
+                    var details = firstErr.closest('details.eff-accordion');
+                    if (details && !details.open) {
+                        details.open = true;
+                    }
+                    var firstContainer = firstErr.closest('.eff-field') || firstErr.parentNode;
+                    firstContainer.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    firstErr.focus();
                     return;
                 }
 
@@ -263,9 +331,18 @@
                         : 'Este campo es obligatorio.';
                     container.appendChild(msg);
                 });
-                var first = fieldErrors[0].closest('.eff-field') || fieldErrors[0].parentNode;
+
+                // Reveal the first error field if inside a tab or closed accordion
+                var firstInput = fieldErrors[0];
+                revealFieldInTabs(firstInput);
+                var details = firstInput.closest('details.eff-accordion');
+                if (details && !details.open) {
+                    details.open = true;
+                }
+
+                var first = firstInput.closest('.eff-field') || firstInput.parentNode;
                 first.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                fieldErrors[0].focus();
+                firstInput.focus();
             }
 
             // Clear error styling on input/change

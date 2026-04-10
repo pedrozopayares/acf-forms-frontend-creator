@@ -70,9 +70,17 @@ class EFF_Form_Renderer {
         echo '<input type="text" id="eff_title" name="eff_title" class="eff-input" required value="' . esc_attr($this->old_value('eff_title')) . '">';
         echo '</div>';
 
-        // ACF fields
-        foreach ($fields as $field) {
-            $this->render_field($field);
+        // ACF fields — detect layout structure (tabs/accordions)
+        $structure = $this->build_sections($fields);
+
+        if ('tabs' === $structure['type']) {
+            $this->render_tabs($structure['sections']);
+        } elseif ('accordions' === $structure['type']) {
+            $this->render_accordions($structure['sections']);
+        } else {
+            foreach ($fields as $field) {
+                $this->render_field($field);
+            }
         }
 
         $btn_text = !empty($settings['submit_button_text']) ? $settings['submit_button_text'] : __('Enviar registro', 'acf-forms-frontend-creator');
@@ -83,6 +91,141 @@ class EFF_Form_Renderer {
         echo '</form>';
 
         return ob_get_clean();
+    }
+
+    /**
+     * Analyze field array and build a section structure based on ACF tab/accordion layout fields.
+     */
+    private function build_sections(array $fields): array {
+        $has_tabs = false;
+        $has_accordions = false;
+
+        foreach ($fields as $field) {
+            if ('tab' === $field['type']) { $has_tabs = true; }
+            if ('accordion' === $field['type']) { $has_accordions = true; }
+        }
+
+        if ($has_tabs) {
+            return [
+                'type'     => 'tabs',
+                'sections' => $this->split_by_type($fields, 'tab'),
+            ];
+        }
+
+        if ($has_accordions) {
+            return [
+                'type'     => 'accordions',
+                'sections' => $this->split_by_type($fields, 'accordion'),
+            ];
+        }
+
+        return ['type' => 'flat', 'sections' => []];
+    }
+
+    /**
+     * Split a flat field array by a layout field type (tab or accordion) into labeled sections.
+     * Fields before the first layout field go into a section with empty label.
+     */
+    private function split_by_type(array $fields, string $layout_type): array {
+        $sections       = [];
+        $current_label  = '';
+        $current_fields = [];
+
+        foreach ($fields as $field) {
+            if ($field['type'] === $layout_type) {
+                // Save previous section if it has fields
+                if (!empty($current_fields)) {
+                    $sections[] = [
+                        'label'  => $current_label,
+                        'fields' => $current_fields,
+                    ];
+                }
+                $current_label  = $field['label'] ?? '';
+                $current_fields = [];
+            } else {
+                $current_fields[] = $field;
+            }
+        }
+
+        // Last section
+        if (!empty($current_fields)) {
+            $sections[] = [
+                'label'  => $current_label,
+                'fields' => $current_fields,
+            ];
+        }
+
+        return $sections;
+    }
+
+    /**
+     * Render tab navigation and panels.
+     */
+    private function render_tabs(array $sections): void {
+        if (empty($sections)) {
+            return;
+        }
+
+        echo '<div class="eff-tabs">';
+
+        // Tab navigation
+        echo '<div class="eff-tabs__nav" role="tablist">';
+        foreach ($sections as $i => $section) {
+            $active = 0 === $i ? ' eff-tabs__btn--active' : '';
+            $label  = !empty($section['label']) ? $section['label'] : sprintf(__('Sección %d', 'acf-forms-frontend-creator'), $i + 1);
+            echo '<button type="button" class="eff-tabs__btn' . $active . '" role="tab" aria-selected="' . (0 === $i ? 'true' : 'false') . '" data-tab="' . $i . '">' . esc_html($label) . '</button>';
+        }
+        echo '</div>';
+
+        // Tab panels
+        foreach ($sections as $i => $section) {
+            $active = 0 === $i ? ' eff-tabs__panel--active' : '';
+            echo '<div class="eff-tabs__panel' . $active . '" role="tabpanel" data-tab-panel="' . $i . '">';
+
+            // Check for nested accordions within this tab
+            $has_acc = false;
+            foreach ($section['fields'] as $field) {
+                if ('accordion' === $field['type']) {
+                    $has_acc = true;
+                    break;
+                }
+            }
+
+            if ($has_acc) {
+                $acc_sections = $this->split_by_type($section['fields'], 'accordion');
+                $this->render_accordions($acc_sections);
+            } else {
+                foreach ($section['fields'] as $field) {
+                    $this->render_field($field);
+                }
+            }
+
+            echo '</div>';
+        }
+
+        echo '</div>';
+    }
+
+    /**
+     * Render accordion (collapsible) sections using <details> elements.
+     */
+    private function render_accordions(array $sections): void {
+        if (empty($sections)) {
+            return;
+        }
+
+        foreach ($sections as $i => $section) {
+            $open  = 0 === $i ? ' open' : '';
+            $label = !empty($section['label']) ? $section['label'] : sprintf(__('Sección %d', 'acf-forms-frontend-creator'), $i + 1);
+            echo '<details class="eff-accordion"' . $open . '>';
+            echo '<summary class="eff-accordion__header">' . esc_html($label) . '</summary>';
+            echo '<div class="eff-accordion__body">';
+            foreach ($section['fields'] as $field) {
+                $this->render_field($field);
+            }
+            echo '</div>';
+            echo '</details>';
+        }
     }
 
     /**

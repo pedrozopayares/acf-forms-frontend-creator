@@ -225,6 +225,94 @@
     overflow: hidden;
 }
 
+/* ── Tabs ── */
+.eff-tabs {
+    margin-bottom: 1.25rem;
+}
+
+.eff-tabs__nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0;
+    border-bottom: 2px solid #e0e0e0;
+    margin-bottom: 1.25rem;
+}
+
+.eff-tabs__btn {
+    padding: 0.65rem 1.25rem;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #666;
+    cursor: pointer;
+    transition: color 0.2s, border-color 0.2s;
+    font-family: inherit;
+}
+
+.eff-tabs__btn:hover {
+    color: #2271b1;
+}
+
+.eff-tabs__btn--active {
+    color: #2271b1;
+    border-bottom-color: #2271b1;
+}
+
+.eff-tabs__panel {
+    display: none;
+}
+
+.eff-tabs__panel--active {
+    display: block;
+}
+
+/* ── Accordion ── */
+.eff-accordion {
+    border: 1px solid #e0e0e0;
+    border-radius: 6px;
+    margin-bottom: 0.75rem;
+    overflow: hidden;
+}
+
+.eff-accordion__header {
+    padding: 0.75rem 1rem;
+    font-weight: 700;
+    font-size: 0.95rem;
+    color: #1a1a1a;
+    cursor: pointer;
+    background: #f9f9f9;
+    transition: background 0.2s;
+    user-select: none;
+    list-style: none;
+}
+
+.eff-accordion__header::-webkit-details-marker {
+    display: none;
+}
+
+.eff-accordion__header::before {
+    content: '▶';
+    display: inline-block;
+    margin-right: 0.5rem;
+    font-size: 0.7rem;
+    transition: transform 0.2s;
+}
+
+.eff-accordion[open] > .eff-accordion__header::before {
+    transform: rotate(90deg);
+}
+
+.eff-accordion__header:hover {
+    background: #f0f0f1;
+}
+
+.eff-accordion__body {
+    padding: 1rem 1.25rem;
+}
+
 /* Responsive */
 @media (max-width: 600px) {
     .eff-form {
@@ -235,5 +323,23 @@
     .eff-textarea,
     .eff-select {
         font-size: 1rem;
+    }
+
+    .eff-tabs__nav {
+        flex-direction: column;
+        border-bottom: none;
+        gap: 2px;
+    }
+
+    .eff-tabs__btn {
+        border-bottom: none;
+        border-left: 2px solid transparent;
+        margin-bottom: 0;
+        text-align: left;
+    }
+
+    .eff-tabs__btn--active {
+        border-left-color: #2271b1;
+        background: #f0f7fc;
     }
 }
