@@ -12,8 +12,9 @@ class EFF_Form_Renderer {
      * @param string              $post_type   CPT slug.
      * @param string              $field_group ACF field group key.
      * @param array|WP_Error|null $result      Submission result.
+     * @param string              $layout      Layout mode: auto, tabs, steps, accordion, flat.
      */
-    public function render(string $post_type, string $field_group, $result): string {
+    public function render(string $post_type, string $field_group, $result, string $layout = 'auto'): string {
         $settings = EFF_Admin_Settings::get_settings();
         ob_start();
 
@@ -73,9 +74,14 @@ class EFF_Form_Renderer {
         // ACF fields — detect layout structure (tabs/accordions)
         $structure = $this->build_sections($fields);
 
-        if ('tabs' === $structure['type']) {
+        // Resolve effective layout
+        $effective_layout = $this->resolve_layout($layout, $structure);
+
+        if ('steps' === $effective_layout && !empty($structure['sections'])) {
+            $this->render_steps($structure['sections']);
+        } elseif ('tabs' === $effective_layout && !empty($structure['sections'])) {
             $this->render_tabs($structure['sections']);
-        } elseif ('accordions' === $structure['type']) {
+        } elseif ('accordions' === $effective_layout && !empty($structure['sections'])) {
             $this->render_accordions($structure['sections']);
         } else {
             foreach ($fields as $field) {
@@ -120,6 +126,29 @@ class EFF_Form_Renderer {
         }
 
         return ['type' => 'flat', 'sections' => []];
+    }
+
+    /**
+     * Resolve the effective layout from the shortcode attribute + detected structure.
+     */
+    private function resolve_layout(string $layout, array $structure): string {
+        // Explicit layout override
+        if (in_array($layout, ['tabs', 'steps', 'accordion', 'flat'], true)) {
+            // steps/tabs/accordion need sections
+            if (in_array($layout, ['tabs', 'steps', 'accordion'], true) && empty($structure['sections'])) {
+                return 'flat';
+            }
+            return $layout;
+        }
+
+        // Auto: use detected structure type
+        if ($structure['type'] === 'tabs') {
+            return 'tabs';
+        }
+        if ($structure['type'] === 'accordions') {
+            return 'accordions';
+        }
+        return 'flat';
     }
 
     /**
@@ -199,6 +228,69 @@ class EFF_Form_Renderer {
                     $this->render_field($field);
                 }
             }
+
+            echo '</div>';
+        }
+
+        echo '</div>';
+    }
+
+    /**
+     * Render multi-step wizard with progress bar and per-step navigation.
+     */
+    private function render_steps(array $sections): void {
+        if (empty($sections)) {
+            return;
+        }
+
+        $total = count($sections);
+
+        echo '<div class="eff-wizard" data-total-steps="' . $total . '">';
+
+        // Progress bar
+        echo '<div class="eff-wizard__progress">';
+        foreach ($sections as $i => $section) {
+            $label  = !empty($section['label']) ? $section['label'] : sprintf(__('Paso %d', 'acf-forms-frontend-creator'), $i + 1);
+            $active = 0 === $i ? ' eff-wizard__step--active' : '';
+            echo '<div class="eff-wizard__step' . $active . '" data-step="' . $i . '">';
+            echo '<span class="eff-wizard__number">' . ($i + 1) . '</span>';
+            echo '<span class="eff-wizard__label">' . esc_html($label) . '</span>';
+            echo '</div>';
+        }
+        echo '</div>';
+
+        // Step panels
+        foreach ($sections as $i => $section) {
+            $active = 0 === $i ? ' eff-wizard__panel--active' : '';
+            echo '<div class="eff-wizard__panel' . $active . '" data-step-panel="' . $i . '">';
+
+            // Check for nested accordions within this step
+            $has_acc = false;
+            foreach ($section['fields'] as $field) {
+                if ('accordion' === $field['type']) {
+                    $has_acc = true;
+                    break;
+                }
+            }
+
+            if ($has_acc) {
+                $acc_sections = $this->split_by_type($section['fields'], 'accordion');
+                $this->render_accordions($acc_sections);
+            } else {
+                foreach ($section['fields'] as $field) {
+                    $this->render_field($field);
+                }
+            }
+
+            // Step navigation buttons
+            echo '<div class="eff-wizard__nav">';
+            if ($i > 0) {
+                echo '<button type="button" class="eff-btn eff-btn--secondary eff-wizard__prev">' . esc_html__('Anterior', 'acf-forms-frontend-creator') . '</button>';
+            }
+            if ($i < $total - 1) {
+                echo '<button type="button" class="eff-btn eff-btn--primary eff-wizard__next">' . esc_html__('Siguiente', 'acf-forms-frontend-creator') . '</button>';
+            }
+            echo '</div>';
 
             echo '</div>';
         }

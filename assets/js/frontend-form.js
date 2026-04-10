@@ -6,6 +6,7 @@
 
     document.addEventListener('DOMContentLoaded', function () {
         initTabs();
+        initSteps();
         initRepeaters();
         initFormEnhancements();
     });
@@ -69,6 +70,204 @@
             btn.setAttribute('aria-selected', 'true');
         }
         panel.classList.add('eff-tabs__panel--active');
+    }
+
+    /**
+     * Multi-step wizard: step navigation with per-step validation.
+     */
+    function initSteps() {
+        document.querySelectorAll('.eff-wizard').forEach(function (wizard) {
+            var panels   = wizard.querySelectorAll('.eff-wizard__panel');
+            var steps    = wizard.querySelectorAll('.eff-wizard__step');
+            var form     = wizard.closest('.eff-form');
+            var submitWrap = form ? form.querySelector('.eff-field--submit') : null;
+
+            // Hide submit button until last step
+            if (submitWrap) {
+                submitWrap.style.display = 'none';
+            }
+
+            function goToStep(index) {
+                panels.forEach(function (p) { p.classList.remove('eff-wizard__panel--active'); });
+                steps.forEach(function (s) {
+                    s.classList.remove('eff-wizard__step--active');
+                    s.classList.remove('eff-wizard__step--done');
+                });
+
+                // Mark completed steps
+                for (var j = 0; j < index; j++) {
+                    steps[j].classList.add('eff-wizard__step--done');
+                }
+
+                if (panels[index]) {
+                    panels[index].classList.add('eff-wizard__panel--active');
+                }
+                if (steps[index]) {
+                    steps[index].classList.add('eff-wizard__step--active');
+                }
+
+                // Show/hide submit button
+                var isLast = index === panels.length - 1;
+                if (submitWrap) {
+                    submitWrap.style.display = isLast ? '' : 'none';
+                }
+
+                // Scroll to top of wizard
+                wizard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+
+            function validatePanel(panel) {
+                var errors = [];
+
+                // Clear previous error styling in this panel
+                panel.querySelectorAll('.eff-client-error').forEach(function (el) { el.remove(); });
+                panel.querySelectorAll('.eff-input--error').forEach(function (el) {
+                    el.classList.remove('eff-input--error');
+                });
+
+                // Required fields
+                panel.querySelectorAll('[required]').forEach(function (input) {
+                    if (input.type === 'file') {
+                        if (!input.files || input.files.length === 0) {
+                            errors.push(input);
+                        }
+                    } else if (input.type === 'checkbox' || input.type === 'radio') {
+                        var name = input.name;
+                        var form = input.closest('form');
+                        if (!form.querySelector('input[name="' + name + '"]:checked')) {
+                            if (errors.indexOf(input) === -1) errors.push(input);
+                        }
+                    } else {
+                        if (!input.value || input.value.trim() === '') {
+                            errors.push(input);
+                        }
+                    }
+                });
+
+                // File type validation
+                panel.querySelectorAll('input[type="file"]').forEach(function (input) {
+                    if (!input.files || input.files.length === 0) return;
+                    var acceptAttr = input.getAttribute('accept');
+                    if (!acceptAttr) return;
+                    var fileExt = '.' + input.files[0].name.split('.').pop().toLowerCase();
+                    var allowedList = acceptAttr.split(',').map(function (a) { return a.trim().toLowerCase(); });
+                    var allowed = allowedList.some(function (a) {
+                        return a.indexOf('/') !== -1 || a === fileExt;
+                    });
+                    if (!allowed) {
+                        errors.push(input);
+                    }
+                });
+
+                if (errors.length > 0) {
+                    errors.forEach(function (input) {
+                        input.classList.add('eff-input--error');
+                        var container = input.closest('.eff-field') || input.parentNode;
+                        var msg = document.createElement('p');
+                        msg.className = 'eff-client-error';
+                        msg.textContent = input.type === 'file'
+                            ? 'Debe seleccionar un archivo.'
+                            : 'Este campo es obligatorio.';
+                        container.appendChild(msg);
+                    });
+
+                    // Open any closed accordion containing the first error
+                    var details = errors[0].closest('details.eff-accordion');
+                    if (details && !details.open) { details.open = true; }
+
+                    var first = errors[0].closest('.eff-field') || errors[0].parentNode;
+                    first.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    errors[0].focus();
+                    return false;
+                }
+
+                return true;
+            }
+
+            // Next buttons
+            wizard.addEventListener('click', function (e) {
+                if (!e.target.classList.contains('eff-wizard__next')) return;
+
+                var currentPanel = e.target.closest('.eff-wizard__panel');
+                var currentIndex = parseInt(currentPanel.dataset.stepPanel, 10);
+
+                // Also validate the title field if on step 0
+                if (currentIndex === 0 && form) {
+                    var titleInput = form.querySelector('#eff_title');
+                    if (titleInput && titleInput.hasAttribute('required') && (!titleInput.value || titleInput.value.trim() === '')) {
+                        titleInput.classList.add('eff-input--error');
+                        var container = titleInput.closest('.eff-field') || titleInput.parentNode;
+                        if (!container.querySelector('.eff-client-error')) {
+                            var msg = document.createElement('p');
+                            msg.className = 'eff-client-error';
+                            msg.textContent = 'Este campo es obligatorio.';
+                            container.appendChild(msg);
+                        }
+                        container.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        titleInput.focus();
+                        return;
+                    }
+                }
+
+                if (!validatePanel(currentPanel)) return;
+
+                goToStep(currentIndex + 1);
+            });
+
+            // Previous buttons
+            wizard.addEventListener('click', function (e) {
+                if (!e.target.classList.contains('eff-wizard__prev')) return;
+
+                var currentPanel = e.target.closest('.eff-wizard__panel');
+                var currentIndex = parseInt(currentPanel.dataset.stepPanel, 10);
+                goToStep(currentIndex - 1);
+            });
+
+            // Clickable progress steps (only for completed steps)
+            steps.forEach(function (step) {
+                step.addEventListener('click', function () {
+                    if (step.classList.contains('eff-wizard__step--done')) {
+                        goToStep(parseInt(step.dataset.step, 10));
+                    }
+                });
+            });
+        });
+    }
+
+    /**
+     * Reveal the wizard step containing a given element (for server-side validation errors).
+     */
+    function revealFieldInSteps(el) {
+        var panel = el.closest('.eff-wizard__panel');
+        if (!panel) return;
+
+        var wizard = panel.closest('.eff-wizard');
+        if (!wizard) return;
+
+        var stepIndex = parseInt(panel.dataset.stepPanel, 10);
+        var panels = wizard.querySelectorAll('.eff-wizard__panel');
+        var steps  = wizard.querySelectorAll('.eff-wizard__step');
+        var form   = wizard.closest('.eff-form');
+        var submitWrap = form ? form.querySelector('.eff-field--submit') : null;
+
+        panels.forEach(function (p) { p.classList.remove('eff-wizard__panel--active'); });
+        steps.forEach(function (s) {
+            s.classList.remove('eff-wizard__step--active');
+            s.classList.remove('eff-wizard__step--done');
+        });
+
+        for (var j = 0; j < stepIndex; j++) {
+            steps[j].classList.add('eff-wizard__step--done');
+        }
+
+        panel.classList.add('eff-wizard__panel--active');
+        if (steps[stepIndex]) {
+            steps[stepIndex].classList.add('eff-wizard__step--active');
+        }
+
+        if (submitWrap) {
+            submitWrap.style.display = stepIndex === panels.length - 1 ? '' : 'none';
+        }
     }
 
     function initRepeaters() {
@@ -332,9 +531,10 @@
                     container.appendChild(msg);
                 });
 
-                // Reveal the first error field if inside a tab or closed accordion
+                // Reveal the first error field if inside a tab, wizard step, or closed accordion
                 var firstInput = fieldErrors[0];
                 revealFieldInTabs(firstInput);
+                revealFieldInSteps(firstInput);
                 var details = firstInput.closest('details.eff-accordion');
                 if (details && !details.open) {
                     details.open = true;
@@ -353,6 +553,17 @@
                 clearFieldError(e.target);
             });
         });
+    }
+
+    function clearFieldError(target) {
+        if (target.classList.contains('eff-input--error')) {
+            target.classList.remove('eff-input--error');
+        }
+        var container = target.closest('.eff-field') || target.parentNode;
+        if (container) {
+            var err = container.querySelector('.eff-client-error');
+            if (err) err.remove();
+        }
     }
 
     function escapeHtml(text) {

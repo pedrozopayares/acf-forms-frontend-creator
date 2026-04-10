@@ -2,7 +2,7 @@
 /**
  * Plugin Name: ACF Forms Frontend Creator
  * Description: Muestra un formulario en el frontend para crear registros de Custom Post Types con campos ACF. Los registros quedan en estado pendiente hasta aprobación del administrador.
- * Version: 1.2.0
+ * Version: 1.3.0
  * Author: Impactos
  * Text Domain: acf-forms-frontend-creator
  * Requires Plugins: advanced-custom-fields
@@ -12,7 +12,7 @@ defined('ABSPATH') || exit;
 
 define('EFF_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('EFF_PLUGIN_URL', plugin_dir_url(__FILE__));
-define('EFF_VERSION', '1.2.0');
+define('EFF_VERSION', '1.3.0');
 
 require_once EFF_PLUGIN_DIR . 'includes/class-form-renderer.php';
 require_once EFF_PLUGIN_DIR . 'includes/class-form-handler.php';
@@ -62,6 +62,7 @@ final class AFFC_Plugin {
         $atts = shortcode_atts([
             'post_type'   => '',
             'field_group' => '',
+            'layout'      => 'auto',
         ], $atts, 'acf_frontend_form');
 
         // Require ACF
@@ -81,7 +82,9 @@ final class AFFC_Plugin {
         // Process form submission
         $result = $this->handler->maybe_process($post_type, $field_group);
 
-        return $this->renderer->render($post_type, $field_group, $result);
+        $layout = sanitize_key($atts['layout']);
+
+        return $this->renderer->render($post_type, $field_group, $result, $layout);
     }
 
     /**
