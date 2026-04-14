@@ -243,11 +243,12 @@
     margin-bottom: 1.25rem;
 }
 
-.eff-tabs__btn {
+.eff-tabs .eff-tabs__btn {
     padding: 0.65rem 1.25rem;
     background: none;
     border: none;
     border-bottom: 2px solid transparent;
+    border-radius: 0;
     margin-bottom: -2px;
     font-size: 0.9rem;
     font-weight: 600;
@@ -257,13 +258,18 @@
     font-family: inherit;
 }
 
-.eff-tabs__btn:hover {
+.eff-tabs .eff-tabs__btn:hover,
+.eff-tabs .eff-tabs__btn:focus {
     color: #2271b1;
+    background: none;
 }
 
-.eff-tabs__btn--active {
+.eff-tabs .eff-tabs__btn--active,
+.eff-tabs .eff-tabs__btn--active:hover,
+.eff-tabs .eff-tabs__btn--active:focus {
     color: #2271b1;
     border-bottom-color: #2271b1;
+    background: none;
 }
 
 .eff-tabs__panel {
@@ -454,14 +460,16 @@
         gap: 2px;
     }
 
-    .eff-tabs__btn {
+    .eff-tabs .eff-tabs__btn {
         border-bottom: none;
         border-left: 2px solid transparent;
         margin-bottom: 0;
         text-align: left;
     }
 
-    .eff-tabs__btn--active {
+    .eff-tabs .eff-tabs__btn--active,
+    .eff-tabs .eff-tabs__btn--active:hover,
+    .eff-tabs .eff-tabs__btn--active:focus {
         border-left-color: #2271b1;
         background: #f0f7fc;
     }
