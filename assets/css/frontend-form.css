@@ -13,6 +13,11 @@
     box-sizing: border-box;
 }
 
+/* Conditional logic: hidden fields */
+.eff-field--hidden {
+    display: none !important;
+}
+
 /* Notices */
 .eff-notice {
     padding: 1rem 1.25rem;

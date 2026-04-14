@@ -60,7 +60,7 @@ class EFF_Form_Handler {
         }
 
         // Handle file uploads
-        $file_values = $this->handle_file_uploads($fields, $errors);
+        $file_values = $this->handle_file_uploads($fields, $acf_data, $errors);
         if ($errors->has_errors()) {
             return $errors;
         }
@@ -143,6 +143,11 @@ class EFF_Form_Handler {
 
             // Skip file/image types (handled separately)
             if (in_array($field['type'], ['file', 'image'], true)) {
+                continue;
+            }
+
+            // Skip fields hidden by conditional logic
+            if ($this->is_field_conditionally_hidden($field, $fields, $data)) {
                 continue;
             }
 
@@ -272,13 +277,18 @@ class EFF_Form_Handler {
     /**
      * Handle file/image uploads for the submission.
      */
-    private function handle_file_uploads(array $fields, WP_Error &$errors): array {
+    private function handle_file_uploads(array $fields, array $data, WP_Error &$errors): array {
         $results = [];
         $has_files = !empty($_FILES['acf']);
 
         // Always validate required file fields, even if no files were uploaded
         foreach ($fields as $field) {
             if (!in_array($field['type'], ['file', 'image'], true)) {
+                continue;
+            }
+
+            // Skip fields hidden by conditional logic
+            if ($this->is_field_conditionally_hidden($field, $fields, $data)) {
                 continue;
             }
 
@@ -432,5 +442,89 @@ class EFF_Form_Handler {
         );
 
         wp_mail($to, $subject, $message);
+    }
+
+    /**
+     * Check if a field should be hidden based on its ACF conditional_logic and submitted data.
+     *
+     * @param array $field      The field being evaluated.
+     * @param array $all_fields All fields in the group (to resolve keys to names).
+     * @param array $data       Submitted ACF data keyed by field name.
+     * @return bool True if the field should be hidden (conditions NOT met).
+     */
+    private function is_field_conditionally_hidden(array $field, array $all_fields, array $data): bool {
+        if (empty($field['conditional_logic']) || !is_array($field['conditional_logic'])) {
+            return false;
+        }
+
+        // Build key→name map
+        $key_map = [];
+        foreach ($all_fields as $f) {
+            if (!empty($f['key']) && !empty($f['name'])) {
+                $key_map[$f['key']] = $f['name'];
+            }
+        }
+
+        // Evaluate OR groups (field is visible if ANY group passes)
+        foreach ($field['conditional_logic'] as $or_group) {
+            if (!is_array($or_group)) {
+                continue;
+            }
+
+            $group_passes = true;
+            foreach ($or_group as $rule) {
+                $target_key  = $rule['field'] ?? '';
+                $target_name = $key_map[$target_key] ?? '';
+                if (empty($target_name)) {
+                    $group_passes = false;
+                    break;
+                }
+
+                $actual   = $data[$target_name] ?? '';
+                $expected = $rule['value'] ?? '';
+                $operator = $rule['operator'] ?? '==';
+
+                if (!$this->evaluate_condition($actual, $operator, $expected)) {
+                    $group_passes = false;
+                    break;
+                }
+            }
+
+            if ($group_passes) {
+                return false; // Visible — at least one OR group passed
+            }
+        }
+
+        return true; // Hidden — no OR group passed
+    }
+
+    /**
+     * Evaluate a single conditional logic rule.
+     */
+    private function evaluate_condition(mixed $actual, string $operator, string $expected): bool {
+        // Handle array values (checkboxes, multi-selects)
+        if (is_array($actual)) {
+            return match ($operator) {
+                '=='        => in_array($expected, $actual, true),
+                '!='        => !in_array($expected, $actual, true),
+                '==empty'   => empty($actual),
+                '!=empty'   => !empty($actual),
+                default     => in_array($expected, $actual, true),
+            };
+        }
+
+        $actual = (string) $actual;
+        return match ($operator) {
+            '=='         => $actual === $expected,
+            '!='         => $actual !== $expected,
+            '==empty'    => $actual === '',
+            '!=empty'    => $actual !== '',
+            '==contains' => str_contains($actual, $expected),
+            '<'          => (float) $actual < (float) $expected,
+            '>'          => (float) $actual > (float) $expected,
+            '<='         => (float) $actual <= (float) $expected,
+            '>='         => (float) $actual >= (float) $expected,
+            default      => $actual === $expected,
+        };
     }
 }

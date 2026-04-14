@@ -8,6 +8,7 @@
         initTabs();
         initSteps();
         initRepeaters();
+        initConditionalLogic();
         initFormEnhancements();
     });
 
@@ -127,6 +128,10 @@
 
                 // Required fields
                 panel.querySelectorAll('[required]').forEach(function (input) {
+                    // Skip fields hidden by conditional logic
+                    var wrapper = input.closest('[data-eff-hidden]');
+                    if (wrapper) return;
+
                     if (input.type === 'file') {
                         if (!input.files || input.files.length === 0) {
                             errors.push(input);
@@ -392,6 +397,10 @@
                 // Client-side required validation
                 var errors = [];
                 form.querySelectorAll('[required]').forEach(function (input) {
+                    // Skip fields hidden by conditional logic
+                    var wrapper = input.closest('[data-eff-hidden]');
+                    if (wrapper) return;
+
                     if (input.type === 'file') {
                         if (!input.files || input.files.length === 0) {
                             errors.push(input);
@@ -570,5 +579,224 @@
         var div = document.createElement('div');
         div.appendChild(document.createTextNode(text));
         return div.innerHTML;
+    }
+
+    /**
+     * Conditional logic: show/hide fields based on ACF conditional_logic rules.
+     *
+     * Each field with conditions has: data-eff-conditions='[[{"field":"name","operator":"==","value":"x"}]]'
+     * Structure: array of OR groups, each containing AND rules.
+     * A field is visible if ANY OR group is fully satisfied (all AND rules pass).
+     */
+    function initConditionalLogic() {
+        var condFields = document.querySelectorAll('[data-eff-conditions]');
+        if (condFields.length === 0) return;
+
+        // Parse conditions and collect trigger field names
+        var entries = [];
+        var triggerNames = {};
+
+        condFields.forEach(function (el) {
+            var raw = el.getAttribute('data-eff-conditions');
+            try {
+                var conditions = JSON.parse(raw);
+            } catch (e) {
+                return;
+            }
+            var entry = { el: el, conditions: conditions };
+            entries.push(entry);
+
+            // Collect all trigger field names
+            conditions.forEach(function (orGroup) {
+                orGroup.forEach(function (rule) {
+                    triggerNames[rule.field] = true;
+                });
+            });
+        });
+
+        if (entries.length === 0) return;
+
+        // Find the form(s) containing conditional fields
+        var forms = [];
+        document.querySelectorAll('.eff-form').forEach(function (f) { forms.push(f); });
+
+        /**
+         * Get the current value of a field by its ACF field name.
+         */
+        function getFieldValue(fieldName) {
+            for (var fi = 0; fi < forms.length; fi++) {
+                var form = forms[fi];
+
+                // Radio buttons
+                var checkedRadio = form.querySelector('input[name="acf[' + fieldName + ']"][type="radio"]:checked');
+                if (checkedRadio) return checkedRadio.value;
+
+                // Check if there are radio inputs for this field (unchecked = empty)
+                var radios = form.querySelectorAll('input[name="acf[' + fieldName + ']"][type="radio"]');
+                if (radios.length > 0) return '';
+
+                // Checkboxes (multi-value)
+                var checkboxes = form.querySelectorAll('input[name="acf[' + fieldName + '][]"][type="checkbox"]');
+                if (checkboxes.length > 0) {
+                    var vals = [];
+                    checkboxes.forEach(function (cb) {
+                        if (cb.checked) vals.push(cb.value);
+                    });
+                    return vals;
+                }
+
+                // Single checkbox (true_false)
+                var singleCb = form.querySelector('input[name="acf[' + fieldName + ']"][type="checkbox"]');
+                if (singleCb) return singleCb.checked ? '1' : '0';
+
+                // Select
+                var sel = form.querySelector('select[name="acf[' + fieldName + ']"], select[name="acf[' + fieldName + '][]"]');
+                if (sel) {
+                    if (sel.multiple) {
+                        var selectedVals = [];
+                        for (var oi = 0; oi < sel.options.length; oi++) {
+                            if (sel.options[oi].selected && sel.options[oi].value !== '') {
+                                selectedVals.push(sel.options[oi].value);
+                            }
+                        }
+                        return selectedVals;
+                    }
+                    return sel.value;
+                }
+
+                // Text/number/date/etc inputs and textareas
+                var input = form.querySelector(
+                    'input[name="acf[' + fieldName + ']"], textarea[name="acf[' + fieldName + ']"]'
+                );
+                if (input) return input.value;
+            }
+            return '';
+        }
+
+        /**
+         * Evaluate a single rule against the current field value.
+         */
+        function evaluateRule(rule) {
+            var actual = getFieldValue(rule.field);
+            var expected = rule.value;
+            var op = rule.operator;
+
+            // Handle array values (checkboxes, multi-selects)
+            if (Array.isArray(actual)) {
+                switch (op) {
+                    case '==':
+                        return actual.indexOf(expected) !== -1;
+                    case '!=':
+                        return actual.indexOf(expected) === -1;
+                    case '==empty':
+                        return actual.length === 0;
+                    case '!=empty':
+                        return actual.length > 0;
+                    default:
+                        return actual.indexOf(expected) !== -1;
+                }
+            }
+
+            // Scalar comparison
+            switch (op) {
+                case '==':
+                    return String(actual) === String(expected);
+                case '!=':
+                    return String(actual) !== String(expected);
+                case '==empty':
+                    return actual === '' || actual === null || actual === undefined;
+                case '!=empty':
+                    return actual !== '' && actual !== null && actual !== undefined;
+                case '==contains':
+                    return String(actual).indexOf(String(expected)) !== -1;
+                case '==pattern':
+                    try { return new RegExp(expected).test(String(actual)); } catch (e) { return false; }
+                case '<':
+                    return parseFloat(actual) < parseFloat(expected);
+                case '>':
+                    return parseFloat(actual) > parseFloat(expected);
+                case '<=':
+                    return parseFloat(actual) <= parseFloat(expected);
+                case '>=':
+                    return parseFloat(actual) >= parseFloat(expected);
+                default:
+                    return String(actual) === String(expected);
+            }
+        }
+
+        /**
+         * Evaluate all conditions for a single entry (OR of ANDs).
+         */
+        function evaluateConditions(conditions) {
+            for (var i = 0; i < conditions.length; i++) {
+                var orGroup = conditions[i];
+                var allPass = true;
+                for (var j = 0; j < orGroup.length; j++) {
+                    if (!evaluateRule(orGroup[j])) {
+                        allPass = false;
+                        break;
+                    }
+                }
+                if (allPass) return true;
+            }
+            return false;
+        }
+
+        /**
+         * Run all conditional logic evaluations and show/hide fields.
+         */
+        function runConditionalLogic() {
+            entries.forEach(function (entry) {
+                var visible = evaluateConditions(entry.conditions);
+                if (visible) {
+                    entry.el.classList.remove('eff-field--hidden');
+                    entry.el.removeAttribute('data-eff-hidden');
+                } else {
+                    entry.el.classList.add('eff-field--hidden');
+                    entry.el.setAttribute('data-eff-hidden', '1');
+
+                    // Clear validation errors when hiding
+                    entry.el.querySelectorAll('.eff-input--error').forEach(function (el) {
+                        el.classList.remove('eff-input--error');
+                    });
+                    entry.el.querySelectorAll('.eff-client-error').forEach(function (el) {
+                        el.remove();
+                    });
+                }
+            });
+        }
+
+        // Initial evaluation
+        runConditionalLogic();
+
+        // Bind change/input events on trigger fields
+        forms.forEach(function (form) {
+            form.addEventListener('change', function (e) {
+                var target = e.target;
+                if (!target.name) return;
+
+                // Extract field name from acf[field_name] or acf[field_name][]
+                var match = target.name.match(/^acf\[([^\]]+)\]/);
+                if (!match) return;
+
+                var changedName = match[1];
+                if (triggerNames[changedName]) {
+                    runConditionalLogic();
+                }
+            });
+
+            form.addEventListener('input', function (e) {
+                var target = e.target;
+                if (!target.name || target.type === 'checkbox' || target.type === 'radio') return;
+
+                var match = target.name.match(/^acf\[([^\]]+)\]/);
+                if (!match) return;
+
+                var changedName = match[1];
+                if (triggerNames[changedName]) {
+                    runConditionalLogic();
+                }
+            });
+        });
     }
 })();

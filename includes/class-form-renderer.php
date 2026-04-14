@@ -6,6 +6,8 @@ defined('ABSPATH') || exit;
  */
 class EFF_Form_Renderer {
 
+    private array $field_key_map = [];
+
     /**
      * Render the full form or success message.
      *
@@ -51,6 +53,9 @@ class EFF_Form_Renderer {
             echo '<p class="eff-error">' . esc_html__('No se encontraron campos para este formulario.', 'acf-forms-frontend-creator') . '</p>';
             return ob_get_clean();
         }
+
+        // Build key→name map for conditional logic resolution
+        $this->field_key_map = $this->build_field_key_map($fields);
 
         $cpt_obj    = get_post_type_object($post_type);
         $cpt_label  = $cpt_obj ? $cpt_obj->labels->singular_name : $post_type;
@@ -332,7 +337,8 @@ class EFF_Form_Renderer {
 
         // Group field: render sub-fields recursively
         if ('group' === $field['type'] && !empty($field['sub_fields'])) {
-            echo '<fieldset class="eff-fieldset">';
+            $cond_attr = $this->build_conditional_attr($field);
+            echo '<fieldset class="eff-fieldset"' . $cond_attr . ' data-field-name="' . esc_attr($field['name']) . '">';
             if (!empty($field['label'])) {
                 echo '<legend class="eff-legend">' . esc_html($field['label']) . '</legend>';
             }
@@ -347,7 +353,8 @@ class EFF_Form_Renderer {
 
         // Repeater field: render as a repeatable set
         if ('repeater' === $field['type'] && !empty($field['sub_fields'])) {
-            echo '<fieldset class="eff-fieldset eff-repeater" data-field="' . esc_attr($field['name']) . '" data-min="' . esc_attr($field['min'] ?? 0) . '" data-max="' . esc_attr($field['max'] ?? 0) . '">';
+            $cond_attr = $this->build_conditional_attr($field);
+            echo '<fieldset class="eff-fieldset eff-repeater"' . $cond_attr . ' data-field-name="' . esc_attr($field['name']) . '" data-field="' . esc_attr($field['name']) . '" data-min="' . esc_attr($field['min'] ?? 0) . '" data-max="' . esc_attr($field['max'] ?? 0) . '">';
             if (!empty($field['label'])) {
                 echo '<legend class="eff-legend">' . esc_html($field['label']);
                 if (!empty($field['required'])) {
@@ -379,7 +386,10 @@ class EFF_Form_Renderer {
         $old           = $this->old_value($field_name);
         $classes        = 'eff-field' . ($required ? ' eff-field--required' : '');
 
-        echo '<div class="' . esc_attr($classes) . '">';
+        // Conditional logic data attribute
+        $cond_attr = $this->build_conditional_attr($field);
+
+        echo '<div class="' . esc_attr($classes) . '"' . $cond_attr . ' data-field-name="' . esc_attr($field['name']) . '">';
 
         switch ($field['type']) {
             case 'text':
@@ -523,6 +533,71 @@ class EFF_Form_Renderer {
         }
 
         echo '</div>';
+    }
+
+    /**
+     * Build a map of ACF field keys to field names for resolving conditional logic references.
+     */
+    private function build_field_key_map(array $fields): array {
+        $map = [];
+        foreach ($fields as $field) {
+            if (!empty($field['key']) && !empty($field['name'])) {
+                $map[$field['key']] = $field['name'];
+            }
+            if (!empty($field['sub_fields'])) {
+                $map = array_merge($map, $this->build_field_key_map($field['sub_fields']));
+            }
+        }
+        return $map;
+    }
+
+    /**
+     * Build the data-eff-conditions attribute from a field's conditional_logic.
+     *
+     * ACF conditional_logic structure:
+     *   [ // OR groups
+     *     [ // AND rules within a group
+     *       ['field' => 'field_abc123', 'operator' => '==', 'value' => 'yes'],
+     *       ...
+     *     ],
+     *     ...
+     *   ]
+     *
+     * We translate field keys to field names for frontend evaluation.
+     */
+    private function build_conditional_attr(array $field): string {
+        if (empty($field['conditional_logic']) || !is_array($field['conditional_logic'])) {
+            return '';
+        }
+
+        $rules = [];
+        foreach ($field['conditional_logic'] as $or_group) {
+            if (!is_array($or_group)) {
+                continue;
+            }
+            $and_rules = [];
+            foreach ($or_group as $rule) {
+                $target_key  = $rule['field'] ?? '';
+                $target_name = $this->field_key_map[$target_key] ?? '';
+                if (empty($target_name)) {
+                    continue;
+                }
+                $and_rules[] = [
+                    'field'    => $target_name,
+                    'operator' => $rule['operator'] ?? '==',
+                    'value'    => $rule['value'] ?? '',
+                ];
+            }
+            if (!empty($and_rules)) {
+                $rules[] = $and_rules;
+            }
+        }
+
+        if (empty($rules)) {
+            return '';
+        }
+
+        return ' data-eff-conditions="' . esc_attr(wp_json_encode($rules)) . '"';
     }
 
     /**
