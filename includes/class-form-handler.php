@@ -38,12 +38,6 @@ class EFF_Form_Handler {
             return new WP_Error('rate_limit', __('Has enviado un registro recientemente. Por favor espera un momento antes de intentar de nuevo.', 'acf-forms-frontend-creator'));
         }
 
-        // Validate title
-        $title = sanitize_text_field(wp_unslash($_POST['eff_title'] ?? ''));
-        if (empty($title)) {
-            return new WP_Error('empty_title', __('El nombre es obligatorio.', 'acf-forms-frontend-creator'));
-        }
-
         // Validate ACF fields
         $fields = acf_get_fields($field_group);
         if (empty($fields)) {
@@ -70,10 +64,10 @@ class EFF_Form_Handler {
         $consecutive = (int) get_option($counter_key, 0) + 1;
         update_option($counter_key, $consecutive, false);
 
-        // Build prefixed title: TYPE 0001 - User Title
+        // Build auto-generated title: TYPE 0001
         $cpt_obj    = get_post_type_object($post_type);
         $type_label = $cpt_obj ? $cpt_obj->labels->singular_name : $post_type;
-        $full_title = sprintf('%s %04d - %s', strtoupper($type_label), $consecutive, $title);
+        $full_title = sprintf('%s %04d', strtoupper($type_label), $consecutive);
 
         // Create the post as pending
         $post_id = wp_insert_post([
@@ -111,7 +105,7 @@ class EFF_Form_Handler {
 
         // Email notification
         if (!empty($settings['notify_admin'])) {
-            $this->send_notification($post_id, $title, $post_type, $settings);
+            $this->send_notification($post_id, $full_title, $post_type, $settings);
         }
 
         /**

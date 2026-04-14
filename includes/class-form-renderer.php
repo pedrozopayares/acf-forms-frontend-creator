@@ -70,12 +70,6 @@ class EFF_Form_Renderer {
             echo '<div class="eff-hp" aria-hidden="true" style="position:absolute;left:-9999px;"><label>No llenar<input type="text" name="eff_website" value="" tabindex="-1" autocomplete="off"></label></div>';
         }
 
-        // Title field
-        echo '<div class="eff-field eff-field--required">';
-        echo '<label for="eff_title" class="eff-label">' . sprintf(esc_html__('Nombre de %s', 'acf-forms-frontend-creator'), esc_html($cpt_label)) . ' <span class="eff-required">*</span></label>';
-        echo '<input type="text" id="eff_title" name="eff_title" class="eff-input" required value="' . esc_attr($this->old_value('eff_title')) . '">';
-        echo '</div>';
-
         // ACF fields — detect layout structure (tabs/accordions)
         $structure = $this->build_sections($fields);
 
