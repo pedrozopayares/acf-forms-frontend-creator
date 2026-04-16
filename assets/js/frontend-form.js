@@ -466,6 +466,20 @@
                     return;
                 }
 
+                // Terms & privacy checkbox validation
+                var termsCheckbox = form.querySelector('#eff_terms_accepted');
+                if (termsCheckbox && termsCheckbox.hasAttribute('required') && !termsCheckbox.checked) {
+                    termsCheckbox.classList.add('eff-input--error');
+                    var termsContainer = termsCheckbox.closest('.eff-field') || termsCheckbox.parentNode;
+                    var termsMsg = document.createElement('p');
+                    termsMsg.className = 'eff-client-error';
+                    termsMsg.textContent = 'Debe aceptar los términos de servicio y la política de privacidad.';
+                    termsContainer.appendChild(termsMsg);
+                    termsContainer.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    termsCheckbox.focus();
+                    return;
+                }
+
                 // Loading state
                 if (btn) {
                     btn.disabled = true;

@@ -230,6 +230,30 @@
     overflow: hidden;
 }
 
+/* Terms & Privacy */
+.eff-field--terms {
+    margin-top: 1.5rem;
+    margin-bottom: 1.25rem;
+    padding: 1rem 1.25rem;
+    background: #f9f9f9;
+    border: 1px solid #e0e0e0;
+    border-radius: 6px;
+}
+
+.eff-terms-label {
+    font-size: 0.9rem;
+    line-height: 1.5;
+}
+
+.eff-terms-label a {
+    color: #2271b1;
+    text-decoration: underline;
+}
+
+.eff-terms-label a:hover {
+    color: #135e96;
+}
+
 /* ── Tabs ── */
 .eff-tabs {
     margin-bottom: 1.25rem;

@@ -25,8 +25,16 @@ class EFF_Admin_Settings {
             'enable_honeypot'    => 1,
             'notify_admin'       => 1,
             'notify_email'       => get_option('admin_email'),
+            'send_visitor_copy'       => 0,
+            'visitor_email_subject'   => 'Copia de tu registro en {site_name}',
+            'visitor_email_body_header' => 'Gracias por tu registro. A continuación encontrarás un resumen de la información enviada:',
+            'visitor_email_body_footer' => 'Tu registro será revisado por un administrador antes de ser publicado.',
             'allowed_file_types' => 'jpg,jpeg,png,gif,webp,pdf',
             'max_file_size_mb'   => 2,
+            'custom_upload_dir'  => '',
+            'enable_terms_checkbox'  => 0,
+            'terms_checkbox_text'    => 'Acepto los <a href="#">términos de servicio</a> y la <a href="#">política de privacidad</a>',
+            'terms_required'         => 1,
             'custom_css'         => '',
         ];
         $saved = get_option('eff_settings', []);
@@ -118,6 +126,47 @@ class EFF_Admin_Settings {
             'description' => __('Dirección de email para recibir notificaciones.', 'acf-forms-frontend-creator'),
         ]);
 
+        // ── Section: Visitor Email Copy ──
+        add_settings_section('eff_visitor_email', __('Copia al visitante', 'acf-forms-frontend-creator'), '__return_false', 'eff-settings');
+
+        add_settings_field('send_visitor_copy', __('Enviar copia al visitante', 'acf-forms-frontend-creator'), [$this, 'field_checkbox'], 'eff-settings', 'eff_visitor_email', [
+            'id' => 'send_visitor_copy',
+            'label' => __('Enviar al visitante una copia del registro por email. Se usa el primer campo de tipo email del formulario.', 'acf-forms-frontend-creator'),
+        ]);
+
+        add_settings_field('visitor_email_subject', __('Asunto del email', 'acf-forms-frontend-creator'), [$this, 'field_text'], 'eff-settings', 'eff_visitor_email', [
+            'id' => 'visitor_email_subject',
+            'description' => __('Asunto del email enviado al visitante. Usa {site_name} como placeholder para el nombre del sitio.', 'acf-forms-frontend-creator'),
+        ]);
+
+        add_settings_field('visitor_email_body_header', __('Encabezado del email', 'acf-forms-frontend-creator'), [$this, 'field_textarea'], 'eff-settings', 'eff_visitor_email', [
+            'id' => 'visitor_email_body_header',
+            'description' => __('Texto introductorio que aparece antes del resumen de datos.', 'acf-forms-frontend-creator'),
+        ]);
+
+        add_settings_field('visitor_email_body_footer', __('Pie del email', 'acf-forms-frontend-creator'), [$this, 'field_textarea'], 'eff-settings', 'eff_visitor_email', [
+            'id' => 'visitor_email_body_footer',
+            'description' => __('Texto que aparece después del resumen de datos.', 'acf-forms-frontend-creator'),
+        ]);
+
+        // ── Section: Terms & Privacy ──
+        add_settings_section('eff_terms', __('Términos y privacidad', 'acf-forms-frontend-creator'), '__return_false', 'eff-settings');
+
+        add_settings_field('enable_terms_checkbox', __('Mostrar aceptación de términos', 'acf-forms-frontend-creator'), [$this, 'field_checkbox'], 'eff-settings', 'eff_terms', [
+            'id' => 'enable_terms_checkbox',
+            'label' => __('Mostrar casilla de aceptación de términos de servicio y política de privacidad.', 'acf-forms-frontend-creator'),
+        ]);
+
+        add_settings_field('terms_checkbox_text', __('Texto de la casilla', 'acf-forms-frontend-creator'), [$this, 'field_textarea_html'], 'eff-settings', 'eff_terms', [
+            'id' => 'terms_checkbox_text',
+            'description' => __('Texto que se muestra junto a la casilla. Se permite HTML para enlaces (<a>). Ejemplo: Acepto los <a href="/terminos">términos</a>.', 'acf-forms-frontend-creator'),
+        ]);
+
+        add_settings_field('terms_required', __('Aceptación obligatoria', 'acf-forms-frontend-creator'), [$this, 'field_checkbox'], 'eff-settings', 'eff_terms', [
+            'id' => 'terms_required',
+            'label' => __('El visitante debe aceptar los términos para enviar el formulario.', 'acf-forms-frontend-creator'),
+        ]);
+
         // ── Section: Files ──
         add_settings_section('eff_files', __('Archivos', 'acf-forms-frontend-creator'), '__return_false', 'eff-settings');
 
@@ -133,6 +182,11 @@ class EFF_Admin_Settings {
             'max' => 100,
         ]);
 
+        add_settings_field('custom_upload_dir', __('Directorio de subida', 'acf-forms-frontend-creator'), [$this, 'field_text'], 'eff-settings', 'eff_files', [
+            'id' => 'custom_upload_dir',
+            'description' => __('Subdirectorio dentro de wp-content/uploads/ para almacenar archivos. Dejar vacío para usar la estructura predeterminada de WordPress (año/mes). Se puede sobreescribir por formulario con el atributo upload_dir del shortcode.', 'acf-forms-frontend-creator'),
+        ]);
+
         // ── Section: Appearance ──
         add_settings_section('eff_appearance', __('Apariencia', 'acf-forms-frontend-creator'), '__return_false', 'eff-settings');
 
@@ -143,6 +197,11 @@ class EFF_Admin_Settings {
     }
 
     public function sanitize_settings(array $input): array {
+        $upload_dir = sanitize_text_field($input['custom_upload_dir'] ?? '');
+        // Security: reject path traversal and leading slashes
+        $upload_dir = str_replace('..', '', $upload_dir);
+        $upload_dir = trim($upload_dir, '/\\');
+
         return [
             'success_message'    => sanitize_textarea_field($input['success_message'] ?? ''),
             'submit_button_text' => sanitize_text_field($input['submit_button_text'] ?? 'Enviar registro'),
@@ -150,8 +209,20 @@ class EFF_Admin_Settings {
             'enable_honeypot'    => !empty($input['enable_honeypot']) ? 1 : 0,
             'notify_admin'       => !empty($input['notify_admin']) ? 1 : 0,
             'notify_email'       => sanitize_email($input['notify_email'] ?? ''),
+            'send_visitor_copy'       => !empty($input['send_visitor_copy']) ? 1 : 0,
+            'visitor_email_subject'   => sanitize_text_field($input['visitor_email_subject'] ?? ''),
+            'visitor_email_body_header' => sanitize_textarea_field($input['visitor_email_body_header'] ?? ''),
+            'visitor_email_body_footer' => sanitize_textarea_field($input['visitor_email_body_footer'] ?? ''),
             'allowed_file_types' => sanitize_text_field($input['allowed_file_types'] ?? ''),
             'max_file_size_mb'   => max(1, absint($input['max_file_size_mb'] ?? 2)),
+            'custom_upload_dir'  => $upload_dir,
+            'enable_terms_checkbox'  => !empty($input['enable_terms_checkbox']) ? 1 : 0,
+            'terms_checkbox_text'    => wp_kses($input['terms_checkbox_text'] ?? '', [
+                'a' => ['href' => [], 'target' => [], 'rel' => [], 'class' => []],
+                'strong' => [],
+                'em' => [],
+            ]),
+            'terms_required'         => !empty($input['terms_required']) ? 1 : 0,
             'custom_css'         => wp_strip_all_tags($input['custom_css'] ?? ''),
         ];
     }
@@ -211,6 +282,15 @@ class EFF_Admin_Settings {
         echo '<textarea id="' . esc_attr($id) . '" name="eff_settings[' . esc_attr($id) . ']" rows="6" class="large-text code" style="font-family:monospace">' . esc_textarea($settings[$id] ?? '') . '</textarea>';
         if (!empty($args['description'])) {
             echo '<p class="description">' . esc_html($args['description']) . '</p>';
+        }
+    }
+
+    public function field_textarea_html(array $args): void {
+        $settings = self::get_settings();
+        $id = $args['id'];
+        echo '<textarea id="' . esc_attr($id) . '" name="eff_settings[' . esc_attr($id) . ']" rows="3" class="large-text">' . esc_textarea($settings[$id] ?? '') . '</textarea>';
+        if (!empty($args['description'])) {
+            echo '<p class="description">' . wp_kses($args['description'], ['a' => ['href' => []], 'code' => []]) . '</p>';
         }
     }
 
@@ -332,6 +412,11 @@ class EFF_Admin_Settings {
                             <td><?php esc_html_e('Ambos', 'acf-forms-frontend-creator'); ?></td>
                             <td><code>[acf_frontend_form post_type="organizacion-esal" field_group="group_69b42dfb12d85"]</code></td>
                             <td><?php esc_html_e('Especifica ambos para evitar la resolución automática.', 'acf-forms-frontend-creator'); ?></td>
+                        </tr>
+                        <tr>
+                            <td><code>upload_dir</code></td>
+                            <td><code>[acf_frontend_form post_type="organizacion-esal" upload_dir="formularios/esal"]</code></td>
+                            <td><?php esc_html_e('Subdirectorio dentro de wp-content/uploads/ para los archivos de este formulario. Sobreescribe la configuración global.', 'acf-forms-frontend-creator'); ?></td>
                         </tr>
                     </tbody>
                 </table>

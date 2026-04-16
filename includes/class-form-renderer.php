@@ -15,8 +15,9 @@ class EFF_Form_Renderer {
      * @param string              $field_group ACF field group key.
      * @param array|WP_Error|null $result      Submission result.
      * @param string              $layout      Layout mode: auto, tabs, steps, accordion, flat.
+     * @param string              $upload_dir  Custom upload subdirectory (from shortcode or settings).
      */
-    public function render(string $post_type, string $field_group, $result, string $layout = 'auto'): string {
+    public function render(string $post_type, string $field_group, $result, string $layout = 'auto', string $upload_dir = ''): string {
         $settings = EFF_Admin_Settings::get_settings();
         ob_start();
 
@@ -65,6 +66,11 @@ class EFF_Form_Renderer {
         echo '<input type="hidden" name="eff_post_type" value="' . esc_attr($post_type) . '">';
         echo '<input type="hidden" name="eff_field_group" value="' . esc_attr($field_group) . '">';
 
+        // Custom upload directory (shortcode > global setting)
+        if (!empty($upload_dir)) {
+            echo '<input type="hidden" name="eff_upload_dir" value="' . esc_attr($upload_dir) . '">';
+        }
+
         // Honeypot anti-spam
         if (!empty($settings['enable_honeypot'])) {
             echo '<div class="eff-hp" aria-hidden="true" style="position:absolute;left:-9999px;"><label>No llenar<input type="text" name="eff_website" value="" tabindex="-1" autocomplete="off"></label></div>';
@@ -89,6 +95,25 @@ class EFF_Form_Renderer {
         }
 
         $btn_text = !empty($settings['submit_button_text']) ? $settings['submit_button_text'] : __('Enviar registro', 'acf-forms-frontend-creator');
+
+        // Terms & privacy checkbox (plugin-injected, independent of ACF fields)
+        if (!empty($settings['enable_terms_checkbox'])) {
+            $terms_text = !empty($settings['terms_checkbox_text'])
+                ? $settings['terms_checkbox_text']
+                : __('Acepto los <a href="#">términos de servicio</a> y la <a href="#">política de privacidad</a>', 'acf-forms-frontend-creator');
+            $terms_required = !empty($settings['terms_required']);
+            $terms_required_attr = $terms_required ? ' required' : '';
+            $terms_required_star = $terms_required ? ' <span class="eff-required">*</span>' : '';
+
+            echo '<div class="eff-field eff-field--terms">';
+            echo '<label class="eff-checkbox-label eff-terms-label" for="eff_terms_accepted">';
+            echo '<input type="checkbox" id="eff_terms_accepted" name="eff_terms_accepted" value="1"' . $terms_required_attr . '> ';
+            echo wp_kses($terms_text, ['a' => ['href' => [], 'target' => [], 'rel' => [], 'class' => []], 'strong' => [], 'em' => []]);
+            echo $terms_required_star;
+            echo '</label>';
+            echo '</div>';
+        }
+
         echo '<input type="hidden" name="eff_submit" value="1">';
         echo '<div class="eff-field eff-field--submit">';
         echo '<button type="submit" class="eff-btn eff-btn--primary">' . esc_html($btn_text) . '</button>';

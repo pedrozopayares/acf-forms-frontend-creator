@@ -31,6 +31,13 @@ class EFF_Form_Handler {
             return ['success' => true, 'post_id' => 0];
         }
 
+        // Terms & privacy acceptance validation
+        if (!empty($settings['enable_terms_checkbox']) && !empty($settings['terms_required'])) {
+            if (empty($_POST['eff_terms_accepted'])) {
+                return new WP_Error('terms_not_accepted', __('Debe aceptar los términos de servicio y la política de privacidad.', 'acf-forms-frontend-creator'));
+            }
+        }
+
         // Rate limiting via transient (per IP)
         $ip_hash    = hash('sha256', $this->get_client_ip() . wp_salt('nonce'));
         $rate_key   = 'eff_rate_' . substr($ip_hash, 0, 20);
@@ -106,6 +113,12 @@ class EFF_Form_Handler {
         // Email notification
         if (!empty($settings['notify_admin'])) {
             $this->send_notification($post_id, $full_title, $post_type, $settings);
+        }
+
+        // Send visitor a copy of their submission
+        if (!empty($settings['send_visitor_copy'])) {
+            $all_fields = acf_get_fields($field_group);
+            $this->send_visitor_copy($post_id, $post_type, $sanitized, $file_values, $all_fields, $settings);
         }
 
         /**
@@ -269,6 +282,98 @@ class EFF_Form_Handler {
     }
 
     /**
+     * Send the visitor a copy of their submitted data via email.
+     */
+    private function send_visitor_copy(int $post_id, string $post_type, array $sanitized, array $file_values, array $fields, array $settings): void {
+        // Find the first email field and get the visitor's email address
+        $visitor_email = '';
+        foreach ($fields as $field) {
+            if ('email' === ($field['type'] ?? '') && !empty($sanitized[$field['name']])) {
+                $visitor_email = $sanitized[$field['name']];
+                break;
+            }
+        }
+
+        if (empty($visitor_email) || !is_email($visitor_email)) {
+            return;
+        }
+
+        $site_name = get_bloginfo('name');
+
+        // Subject
+        $subject = !empty($settings['visitor_email_subject'])
+            ? str_replace('{site_name}', $site_name, $settings['visitor_email_subject'])
+            : sprintf('Copia de tu registro en %s', $site_name);
+
+        // Build field label map
+        $label_map = [];
+        $type_map  = [];
+        foreach ($fields as $field) {
+            if (!empty($field['name']) && !empty($field['label'])) {
+                $label_map[$field['name']] = $field['label'];
+                $type_map[$field['name']]  = $field['type'] ?? 'text';
+            }
+        }
+
+        // Build HTML table rows
+        $rows = '';
+        foreach ($sanitized as $name => $value) {
+            $label = $label_map[$name] ?? $name;
+            $type  = $type_map[$name] ?? 'text';
+
+            // Skip non-displayable types
+            if (in_array($type, ['message', 'accordion', 'tab', 'clone'], true)) {
+                continue;
+            }
+
+            // Format the value for display
+            if (is_array($value)) {
+                $display = esc_html(implode(', ', $value));
+            } elseif ('true_false' === $type) {
+                $display = $value ? __('Sí', 'acf-forms-frontend-creator') : __('No', 'acf-forms-frontend-creator');
+            } else {
+                $display = esc_html((string) $value);
+            }
+
+            if ('' === $display) {
+                $display = '—';
+            }
+
+            $rows .= '<tr><td style="padding:8px 12px;border:1px solid #e0e0e0;font-weight:600;background:#f9f9f9;width:35%;">'
+                . esc_html($label) . '</td><td style="padding:8px 12px;border:1px solid #e0e0e0;">'
+                . $display . '</td></tr>';
+        }
+
+        // Add file fields (show filename only, not URL)
+        foreach ($file_values as $name => $attachment_id) {
+            $label    = $label_map[$name] ?? $name;
+            $filename = get_the_title($attachment_id) ?: __('Archivo adjunto', 'acf-forms-frontend-creator');
+            $rows .= '<tr><td style="padding:8px 12px;border:1px solid #e0e0e0;font-weight:600;background:#f9f9f9;width:35%;">'
+                . esc_html($label) . '</td><td style="padding:8px 12px;border:1px solid #e0e0e0;">'
+                . esc_html($filename) . '</td></tr>';
+        }
+
+        $header = !empty($settings['visitor_email_body_header'])
+            ? esc_html($settings['visitor_email_body_header'])
+            : 'Gracias por tu registro. A continuación encontrarás un resumen de la información enviada:';
+
+        $footer = !empty($settings['visitor_email_body_footer'])
+            ? esc_html($settings['visitor_email_body_footer'])
+            : 'Tu registro será revisado por un administrador antes de ser publicado.';
+
+        $body = '<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">'
+            . '<p>' . nl2br($header) . '</p>'
+            . '<table style="width:100%;border-collapse:collapse;margin:16px 0;">' . $rows . '</table>'
+            . '<p>' . nl2br($footer) . '</p>'
+            . '<p style="color:#999;font-size:0.85em;">' . esc_html($site_name) . '</p>'
+            . '</div>';
+
+        $headers = ['Content-Type: text/html; charset=UTF-8'];
+
+        wp_mail($visitor_email, $subject, $body, $headers);
+    }
+
+    /**
      * Handle file/image uploads for the submission.
      */
     private function handle_file_uploads(array $fields, array $data, WP_Error &$errors): array {
@@ -310,6 +415,25 @@ class EFF_Form_Handler {
         require_once ABSPATH . 'wp-admin/includes/image.php';
         require_once ABSPATH . 'wp-admin/includes/file.php';
         require_once ABSPATH . 'wp-admin/includes/media.php';
+
+        // Resolve custom upload directory: shortcode attribute > global setting > WordPress default
+        $custom_dir = $this->resolve_upload_dir();
+        $upload_filter = null;
+
+        if (!empty($custom_dir)) {
+            $upload_filter = function (array $uploads) use ($custom_dir): array {
+                $uploads['subdir'] = '/' . $custom_dir;
+                $uploads['path']   = $uploads['basedir'] . '/' . $custom_dir;
+                $uploads['url']    = $uploads['baseurl'] . '/' . $custom_dir;
+
+                if (!file_exists($uploads['path'])) {
+                    wp_mkdir_p($uploads['path']);
+                }
+
+                return $uploads;
+            };
+            add_filter('upload_dir', $upload_filter);
+        }
 
         foreach ($fields as $field) {
             if (!in_array($field['type'], ['file', 'image'], true)) {
@@ -396,7 +520,39 @@ class EFF_Form_Handler {
             }
         }
 
+        // Remove the custom upload directory filter
+        if ($upload_filter) {
+            remove_filter('upload_dir', $upload_filter);
+        }
+
         return $results;
+    }
+
+    /**
+     * Resolve the custom upload directory from POST data (shortcode attribute) or global settings.
+     * Returns sanitized subdirectory or empty string for WordPress default.
+     */
+    private function resolve_upload_dir(): string {
+        $dir = sanitize_text_field($_POST['eff_upload_dir'] ?? '');
+
+        if (empty($dir)) {
+            $settings = EFF_Admin_Settings::get_settings();
+            $dir = $settings['custom_upload_dir'] ?? '';
+        }
+
+        if (empty($dir)) {
+            return '';
+        }
+
+        // Security: reject path traversal
+        $dir = str_replace('..', '', $dir);
+        $dir = trim($dir, '/\\');
+
+        if (empty($dir)) {
+            return '';
+        }
+
+        return $dir;
     }
 
     /**

@@ -2,7 +2,7 @@
 /**
  * Plugin Name: ACF Forms Frontend Creator
  * Description: Muestra un formulario en el frontend para crear registros de Custom Post Types con campos ACF. Los registros quedan en estado pendiente hasta aprobación del administrador.
- * Version: 1.5.0
+ * Version: 1.6.0
  * Author: Impactos
  * Text Domain: acf-forms-frontend-creator
  * Requires Plugins: advanced-custom-fields
@@ -12,7 +12,7 @@ defined('ABSPATH') || exit;
 
 define('EFF_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('EFF_PLUGIN_URL', plugin_dir_url(__FILE__));
-define('EFF_VERSION', '1.5.0');
+define('EFF_VERSION', '1.6.0');
 
 require_once EFF_PLUGIN_DIR . 'includes/class-form-renderer.php';
 require_once EFF_PLUGIN_DIR . 'includes/class-form-handler.php';
@@ -57,12 +57,15 @@ final class AFFC_Plugin {
      *  - post_type:   Slug of the CPT to create.
      *  - field_group: ACF field group key. If provided without post_type,
      *                 the plugin resolves the CPT from the group's location rules.
+     *  - layout:      Layout mode: auto, tabs, steps, accordion, flat.
+     *  - upload_dir:  Custom subdirectory within wp-content/uploads/ for file uploads.
      */
     public function shortcode(array $atts = []): string {
         $atts = shortcode_atts([
             'post_type'   => '',
             'field_group' => '',
             'layout'      => 'auto',
+            'upload_dir'  => '',
         ], $atts, 'acf_frontend_form');
 
         // Require ACF
@@ -84,7 +87,16 @@ final class AFFC_Plugin {
 
         $layout = sanitize_key($atts['layout']);
 
-        return $this->renderer->render($post_type, $field_group, $result, $layout);
+        // Resolve upload directory: shortcode attribute > global setting
+        $upload_dir = sanitize_text_field($atts['upload_dir']);
+        $upload_dir = str_replace('..', '', $upload_dir);
+        $upload_dir = trim($upload_dir, '/\\');
+        if (empty($upload_dir)) {
+            $settings_data = EFF_Admin_Settings::get_settings();
+            $upload_dir = $settings_data['custom_upload_dir'] ?? '';
+        }
+
+        return $this->renderer->render($post_type, $field_group, $result, $layout, $upload_dir);
     }
 
     /**
