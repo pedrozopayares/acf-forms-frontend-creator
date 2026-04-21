@@ -61,7 +61,7 @@ class EFF_Form_Handler {
         }
 
         // Handle file uploads
-        $file_values = $this->handle_file_uploads($fields, $acf_data, $errors);
+        $file_values = $this->handle_file_uploads($fields, $acf_data, $errors, $post_type);
         if ($errors->has_errors()) {
             return $errors;
         }
@@ -98,6 +98,11 @@ class EFF_Form_Handler {
         // Save uploaded files
         foreach ($file_values as $field_name => $attachment_id) {
             update_field($field_name, $attachment_id, $post_id);
+        }
+
+        // Rename tmp-* attachments to {post_id}-{timestamp}-{seq}{ext} and link to post.
+        if (!empty($file_values)) {
+            $this->finalize_attachments($file_values, $post_id, $post_type);
         }
 
         // Store metadata about the submission
@@ -376,7 +381,7 @@ class EFF_Form_Handler {
     /**
      * Handle file/image uploads for the submission.
      */
-    private function handle_file_uploads(array $fields, array $data, WP_Error &$errors): array {
+    private function handle_file_uploads(array $fields, array $data, WP_Error &$errors, string $post_type = ''): array {
         $results = [];
         $has_files = !empty($_FILES['acf']);
 
@@ -416,11 +421,51 @@ class EFF_Form_Handler {
         require_once ABSPATH . 'wp-admin/includes/file.php';
         require_once ABSPATH . 'wp-admin/includes/media.php';
 
-        // Resolve custom upload directory: shortcode attribute > global setting > WordPress default
-        $custom_dir = $this->resolve_upload_dir();
-        $upload_filter = null;
+        // Resolve upload directory:
+        // Priority: per-CPT folder map (Formularios_Folder_Resolver) > shortcode attr > global setting > default.
+        $custom_dir    = '';
+        $use_resolver  = false;
+        if ($post_type !== '' && class_exists('Formularios_Folder_Resolver')) {
+            $map = Formularios_Folder_Resolver::get_map();
+            if (!empty($map[$post_type])) {
+                $custom_dir = trim(Formularios_Folder_Resolver::BASE_SUBDIR . '/' . Formularios_Folder_Resolver::get_folder_for_cpt($post_type), '/');
+                Formularios_Folder_Resolver::ensure_folder_exists($post_type);
+                $use_resolver = true;
+            }
+        }
+        if ($custom_dir === '') {
+            $custom_dir = $this->resolve_upload_dir();
+        }
 
-        if (!empty($custom_dir)) {
+        $upload_filter    = null;
+        $prefilter        = null;
+
+        if ($use_resolver) {
+            // Files live at the web root under /documentos/<folder>/, NOT inside uploads.
+            $abs_dir = Formularios_Folder_Resolver::get_absolute_path($post_type); // /abspath/documentos/<folder>/
+            $url_dir = Formularios_Folder_Resolver::get_url($post_type);           // https://site/documentos/<folder>/
+            $abs_dir = untrailingslashit($abs_dir);
+            $url_dir = untrailingslashit($url_dir);
+            $abs_base = untrailingslashit(Formularios_Folder_Resolver::get_base_absolute_path());
+            $url_base = untrailingslashit(Formularios_Folder_Resolver::get_base_url());
+            $folder   = Formularios_Folder_Resolver::get_folder_for_cpt($post_type);
+
+            $upload_filter = function (array $uploads) use ($abs_dir, $url_dir, $abs_base, $url_base, $folder): array {
+                $uploads['basedir'] = $abs_base;
+                $uploads['baseurl'] = $url_base;
+                $uploads['subdir']  = '/' . $folder;
+                $uploads['path']    = $abs_dir;
+                $uploads['url']     = $url_dir;
+                $uploads['error']   = false;
+
+                if (!file_exists($uploads['path'])) {
+                    wp_mkdir_p($uploads['path']);
+                }
+
+                return $uploads;
+            };
+            add_filter('upload_dir', $upload_filter);
+        } elseif (!empty($custom_dir)) {
             $upload_filter = function (array $uploads) use ($custom_dir): array {
                 $uploads['subdir'] = '/' . $custom_dir;
                 $uploads['path']   = $uploads['basedir'] . '/' . $custom_dir;
@@ -433,6 +478,18 @@ class EFF_Form_Handler {
                 return $uploads;
             };
             add_filter('upload_dir', $upload_filter);
+        }
+
+        // When using the per-CPT resolver, give files a temporary name so we can
+        // rename them to {post_id}-{timestamp}-{seq}{ext} once the post exists.
+        if ($use_resolver) {
+            $prefilter = function (array $file): array {
+                $ext  = pathinfo($file['name'], PATHINFO_EXTENSION);
+                $ext  = $ext ? '.' . strtolower($ext) : '';
+                $file['name'] = 'tmp-' . uniqid('', true) . $ext;
+                return $file;
+            };
+            add_filter('wp_handle_upload_prefilter', $prefilter);
         }
 
         foreach ($fields as $field) {
@@ -512,9 +569,16 @@ class EFF_Form_Handler {
                 'post_title'     => sanitize_file_name($file['name']),
                 'post_content'   => '',
                 'post_status'    => 'inherit',
+                'guid'           => $upload['url'],
             ], $upload['file']);
 
             if (!is_wp_error($attachment_id)) {
+                if ($use_resolver) {
+                    // File lives outside uploads/: store absolute path + canonical URL.
+                    update_post_meta($attachment_id, '_wp_attached_file', $upload['file']);
+                    update_post_meta($attachment_id, Formularios_Folder_Resolver::META_MARKER, 1);
+                    update_post_meta($attachment_id, Formularios_Folder_Resolver::META_PUBLIC_URL, $upload['url']);
+                }
                 wp_update_attachment_metadata($attachment_id, wp_generate_attachment_metadata($attachment_id, $upload['file']));
                 $results[$name] = $attachment_id;
             }
@@ -524,8 +588,115 @@ class EFF_Form_Handler {
         if ($upload_filter) {
             remove_filter('upload_dir', $upload_filter);
         }
+        if ($prefilter) {
+            remove_filter('wp_handle_upload_prefilter', $prefilter);
+        }
 
         return $results;
+    }
+
+    /**
+     * Rename tmp-* attachments produced by a frontend submission to a stable
+     * {post_id}-{timestamp}-{seq}{ext} form and attach them to the post.
+     * Updates the physical file, `_wp_attached_file`, `guid` and `post_parent`.
+     *
+     * Silently skips attachments that are not under the per-CPT folder or that
+     * do not have a `tmp-` prefix (backward compat with global custom_upload_dir).
+     *
+     * @param array<string,int> $file_values  [field_name => attachment_id].
+     */
+    private function finalize_attachments(array $file_values, int $post_id, string $post_type): void {
+        if (!class_exists('Formularios_Folder_Resolver')) {
+            // Without the resolver, just link attachments to the post.
+            foreach ($file_values as $attachment_id) {
+                wp_update_post(['ID' => (int) $attachment_id, 'post_parent' => $post_id]);
+            }
+            return;
+        }
+
+        $map = Formularios_Folder_Resolver::get_map();
+        if (empty($map[$post_type])) {
+            foreach ($file_values as $attachment_id) {
+                wp_update_post(['ID' => (int) $attachment_id, 'post_parent' => $post_id]);
+            }
+            return;
+        }
+
+        $abs_dir    = Formularios_Folder_Resolver::get_absolute_path($post_type); // /abspath/documentos/<folder>/
+        $url_prefix = Formularios_Folder_Resolver::get_url($post_type);           // https://site/documentos/<folder>/
+        $timestamp  = current_time('timestamp');
+        $seq        = 0;
+
+        foreach ($file_values as $attachment_id) {
+            $attachment_id = (int) $attachment_id;
+            $seq++;
+
+            // Read raw meta (bypass get_attached_file filter so we see the stored value).
+            $current_stored = get_post_meta($attachment_id, '_wp_attached_file', true);
+            if (!is_string($current_stored) || $current_stored === '') {
+                continue;
+            }
+
+            $is_docroot = (bool) get_post_meta($attachment_id, Formularios_Folder_Resolver::META_MARKER, true);
+            $current_basename = basename($current_stored);
+            $is_tmp           = (strpos($current_basename, 'tmp-') === 0);
+
+            if (!$is_docroot || !$is_tmp) {
+                // Not managed by us, or not a temp upload: just link it.
+                wp_update_post(['ID' => $attachment_id, 'post_parent' => $post_id]);
+                continue;
+            }
+
+            // For docroot attachments, _wp_attached_file is an absolute path.
+            $current_abs = $current_stored;
+            if (!file_exists($current_abs)) {
+                wp_update_post(['ID' => $attachment_id, 'post_parent' => $post_id]);
+                continue;
+            }
+
+            $ext          = pathinfo($current_basename, PATHINFO_EXTENSION);
+            $ext          = $ext ? '.' . strtolower($ext) : '';
+            $new_basename = $post_id . '-' . $timestamp . '-' . $seq . $ext;
+            $new_abs      = $abs_dir . $new_basename;
+
+            // Avoid collisions.
+            $collision = 0;
+            while (file_exists($new_abs)) {
+                $collision++;
+                $new_basename = $post_id . '-' . $timestamp . '-' . $seq . '-' . $collision . $ext;
+                $new_abs      = $abs_dir . $new_basename;
+                if ($collision > 20) {
+                    break;
+                }
+            }
+
+            if (!@rename($current_abs, $new_abs)) {
+                wp_update_post(['ID' => $attachment_id, 'post_parent' => $post_id]);
+                continue;
+            }
+
+            $new_url = $url_prefix . $new_basename;
+            update_post_meta($attachment_id, '_wp_attached_file', $new_abs);
+            update_post_meta($attachment_id, Formularios_Folder_Resolver::META_PUBLIC_URL, $new_url);
+
+            wp_update_post([
+                'ID'          => $attachment_id,
+                'post_parent' => $post_id,
+                'guid'        => $new_url,
+                'post_title'  => pathinfo($new_basename, PATHINFO_FILENAME),
+                'post_name'   => sanitize_title(pathinfo($new_basename, PATHINFO_FILENAME)),
+            ]);
+
+            // Regenerate metadata (especially for images) now that the file path changed.
+            $mime = get_post_mime_type($attachment_id);
+            if (is_string($mime) && strpos($mime, 'image/') === 0) {
+                require_once ABSPATH . 'wp-admin/includes/image.php';
+                $metadata = wp_generate_attachment_metadata($attachment_id, $new_abs);
+                if (!empty($metadata)) {
+                    wp_update_attachment_metadata($attachment_id, $metadata);
+                }
+            }
+        }
     }
 
     /**
