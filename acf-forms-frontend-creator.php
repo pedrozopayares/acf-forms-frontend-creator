@@ -2,7 +2,7 @@
 /**
  * Plugin Name: ACF Forms Frontend Creator
  * Description: Muestra un formulario en el frontend para crear registros de Custom Post Types con campos ACF. Los registros quedan en estado pendiente hasta aprobación del administrador.
- * Version: 1.6.2
+ * Version: 1.7.0
  * Author: Impactos
  * Text Domain: acf-forms-frontend-creator
  * Requires Plugins: advanced-custom-fields
@@ -12,12 +12,13 @@ defined('ABSPATH') || exit;
 
 define('EFF_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('EFF_PLUGIN_URL', plugin_dir_url(__FILE__));
-define('EFF_VERSION', '1.6.2');
+define('EFF_VERSION', '1.7.0');
 
 require_once EFF_PLUGIN_DIR . 'includes/class-form-renderer.php';
 require_once EFF_PLUGIN_DIR . 'includes/class-form-handler.php';
 require_once EFF_PLUGIN_DIR . 'includes/class-admin-approval.php';
 require_once EFF_PLUGIN_DIR . 'includes/class-admin-settings.php';
+require_once EFF_PLUGIN_DIR . 'includes/class-recaptcha.php';
 
 /**
  * Main plugin class.
@@ -187,6 +188,23 @@ final class AFFC_Plugin {
             wp_localize_script('eff-frontend', 'effAjax', [
                 'url' => admin_url('admin-ajax.php'),
             ]);
+
+            // reCAPTCHA v3
+            if (EFF_Recaptcha::is_enabled()) {
+                $site_key = EFF_Recaptcha::get_site_key();
+                if (!empty($site_key)) {
+                    wp_enqueue_script(
+                        'google-recaptcha',
+                        'https://www.google.com/recaptcha/api.js?render=' . esc_attr($site_key),
+                        [],
+                        null,
+                        true
+                    );
+                    wp_localize_script('eff-frontend', 'effRecaptcha', [
+                        'siteKey' => $site_key,
+                    ]);
+                }
+            }
         }
     }
 

@@ -38,6 +38,22 @@ class EFF_Form_Handler {
             }
         }
 
+        // reCAPTCHA validation
+        if (!empty($settings['enable_recaptcha'])) {
+            $token = sanitize_text_field($_POST['g-recaptcha-response'] ?? '');
+            $secret_key = !empty($settings['recaptcha_secret_key']) ? $settings['recaptcha_secret_key'] : '';
+            $min_score = isset($settings['recaptcha_min_score']) ? (float) $settings['recaptcha_min_score'] : 0.5;
+
+            if (empty($token) || empty($secret_key)) {
+                return new WP_Error('recaptcha_missing', __('Error de verificación de seguridad. Por favor recarga la página e intenta de nuevo.', 'acf-forms-frontend-creator'));
+            }
+
+            $recaptcha_result = EFF_Recaptcha::verify($token, $secret_key, $min_score);
+            if (is_wp_error($recaptcha_result)) {
+                return $recaptcha_result;
+            }
+        }
+
         // Rate limiting via transient (per IP)
         $ip_hash    = hash('sha256', $this->get_client_ip() . wp_salt('nonce'));
         $rate_key   = 'eff_rate_' . substr($ip_hash, 0, 20);

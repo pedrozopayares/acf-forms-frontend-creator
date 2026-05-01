@@ -76,6 +76,11 @@ class EFF_Form_Renderer {
             echo '<div class="eff-hp" aria-hidden="true" style="position:absolute;left:-9999px;"><label>No llenar<input type="text" name="eff_website" value="" tabindex="-1" autocomplete="off"></label></div>';
         }
 
+        // reCAPTCHA v3 token field
+        if (!empty($settings['enable_recaptcha'])) {
+            echo '<input type="hidden" id="g-recaptcha-response" name="g-recaptcha-response" value="">';
+        }
+
         // ACF fields — detect layout structure (tabs/accordions)
         $structure = $this->build_sections($fields);
 

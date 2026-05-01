@@ -36,6 +36,10 @@ class EFF_Admin_Settings {
             'terms_checkbox_text'    => 'Acepto los <a href="#">términos de servicio</a> y la <a href="#">política de privacidad</a>',
             'terms_required'         => 1,
             'custom_css'         => '',
+            'enable_recaptcha'    => 0,
+            'recaptcha_site_key'  => '',
+            'recaptcha_secret_key' => '',
+            'recaptcha_min_score' => 0.5,
         ];
         $saved = get_option('eff_settings', []);
         return wp_parse_args(is_array($saved) ? $saved : [], $defaults);
@@ -111,6 +115,29 @@ class EFF_Admin_Settings {
         add_settings_field('enable_honeypot', __('Honeypot anti-spam', 'acf-forms-frontend-creator'), [$this, 'field_checkbox'], 'eff-settings', 'eff_security', [
             'id' => 'enable_honeypot',
             'label' => __('Activar campo honeypot oculto para detectar bots.', 'acf-forms-frontend-creator'),
+        ]);
+
+        add_settings_field('enable_recaptcha', __('Google reCAPTCHA v3', 'acf-forms-frontend-creator'), [$this, 'field_checkbox'], 'eff-settings', 'eff_security', [
+            'id' => 'enable_recaptcha',
+            'label' => __('Activar Google reCAPTCHA v3 para mayor protección contra spam.', 'acf-forms-frontend-creator'),
+        ]);
+
+        add_settings_field('recaptcha_site_key', __('reCAPTCHA Site Key', 'acf-forms-frontend-creator'), [$this, 'field_text'], 'eff-settings', 'eff_security', [
+            'id' => 'recaptcha_site_key',
+            'description' => __('Clave pública de Google reCAPTCHA v3. Obtén las claves en <a href="https://www.google.com/recaptcha/admin" target="_blank">Google reCAPTCHA Console</a>.', 'acf-forms-frontend-creator'),
+        ]);
+
+        add_settings_field('recaptcha_secret_key', __('reCAPTCHA Secret Key', 'acf-forms-frontend-creator'), [$this, 'field_password'], 'eff-settings', 'eff_security', [
+            'id' => 'recaptcha_secret_key',
+            'description' => __('Clave privada de Google reCAPTCHA v3. Mantenla privada y segura.', 'acf-forms-frontend-creator'),
+        ]);
+
+        add_settings_field('recaptcha_min_score', __('Puntuación mínima de reCAPTCHA', 'acf-forms-frontend-creator'), [$this, 'field_number'], 'eff-settings', 'eff_security', [
+            'id' => 'recaptcha_min_score',
+            'description' => __('Valor entre 0.0 y 1.0. Mayor valor = más estricto. Recomendado: 0.5', 'acf-forms-frontend-creator'),
+            'min' => 0.0,
+            'max' => 1.0,
+            'step' => 0.1,
         ]);
 
         // ── Section: Notifications ──
@@ -247,12 +274,22 @@ class EFF_Admin_Settings {
         }
     }
 
+    public function field_password(array $args): void {
+        $settings = self::get_settings();
+        $id = $args['id'];
+        echo '<input type="password" id="' . esc_attr($id) . '" name="eff_settings[' . esc_attr($id) . ']" value="' . esc_attr($settings[$id] ?? '') . '" class="regular-text" autocomplete="off">';
+        if (!empty($args['description'])) {
+            echo '<p class="description">' . $args['description'] . '</p>';
+        }
+    }
+
     public function field_number(array $args): void {
         $settings = self::get_settings();
         $id = $args['id'];
         $min = $args['min'] ?? 0;
         $max = $args['max'] ?? '';
-        echo '<input type="number" id="' . esc_attr($id) . '" name="eff_settings[' . esc_attr($id) . ']" value="' . esc_attr($settings[$id] ?? '') . '" min="' . esc_attr($min) . '" max="' . esc_attr($max) . '" class="small-text">';
+        $step = $args['step'] ?? 1;
+        echo '<input type="number" id="' . esc_attr($id) . '" name="eff_settings[' . esc_attr($id) . ']" value="' . esc_attr($settings[$id] ?? '') . '" min="' . esc_attr($min) . '" max="' . esc_attr($max) . '" step="' . esc_attr($step) . '" class="small-text">';
         if (!empty($args['description'])) {
             echo '<p class="description">' . esc_html($args['description']) . '</p>';
         }

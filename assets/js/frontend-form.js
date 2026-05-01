@@ -486,11 +486,26 @@
                     btn.textContent = 'Enviando...';
                 }
 
-                // Build FormData and add AJAX action
-                var formData = new FormData(form);
-                formData.append('action', 'eff_submit_form');
+                // Capture reCAPTCHA token if enabled
+                if (typeof window.grecaptcha !== 'undefined' && effRecaptcha && effRecaptcha.siteKey) {
+                    window.grecaptcha.ready(function() {
+                        window.grecaptcha.execute(effRecaptcha.siteKey, { action: 'submit' }).then(function(token) {
+                            submitFormWithRecaptcha(token);
+                        });
+                    });
+                } else {
+                    submitFormWithRecaptcha();
+                }
 
-                fetch(effAjax.url, {
+                function submitFormWithRecaptcha(recaptchaToken) {
+                    // Build FormData and add AJAX action
+                    var formData = new FormData(form);
+                    formData.append('action', 'eff_submit_form');
+                    if (recaptchaToken) {
+                        formData.append('g-recaptcha-response', recaptchaToken);
+                    }
+
+                    fetch(effAjax.url, {
                     method: 'POST',
                     body: formData,
                     credentials: 'same-origin'
@@ -533,6 +548,7 @@
                     errorDiv.scrollIntoView({ behavior: 'smooth', block: 'center' });
                     resetBtn();
                 });
+                }
             });
 
             function resetBtn() {
